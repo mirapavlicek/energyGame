@@ -46,16 +46,18 @@
   };
 
   /* Napěťové úrovně vedení: VVN (800/400/220/110 kV), VN (22/11 kV), NN (400 V).
-     Vyšší napětí = větší kapacita a delší trasy, ale dražší dlaždice. */
+     Vyšší napětí = větší kapacita, delší trasy a menší ztráty, ale dražší dlaždice.
+     `loss` je podíl ztrát na dlaždici délky při plném zatížení; skutečná ztráta
+     roste kvadraticky s tokem (I²R): P_ztr = |P|·(|P|/cap)·loss·délka. */
   const LEVELS = [800, 400, 220, 110, 22, 11, 0.4];
   const LINE_TYPES = {
-    800: { name: 'VVN 800 kV', cls: 'VVN', cap: 800, cost: 34, maxLen: 60 },
-    400: { name: 'VVN 400 kV', cls: 'VVN', cap: 400, cost: 20, maxLen: 48 },
-    220: { name: 'VVN 220 kV', cls: 'VVN', cap: 200, cost: 11, maxLen: 36 },
-    110: { name: 'VVN 110 kV', cls: 'VVN', cap: 80,  cost: 6,  maxLen: 28 },
-    22:  { name: 'VN 22 kV',   cls: 'VN',  cap: 30,  cost: 3,  maxLen: 14 },
-    11:  { name: 'VN 11 kV',   cls: 'VN',  cap: 14,  cost: 2,  maxLen: 10 },
-    0.4: { name: 'NN 400 V',   cls: 'NN',  cap: 5,   cost: 1,  maxLen: 5 },
+    800: { name: 'VVN 800 kV', cls: 'VVN', cap: 800, cost: 34, maxLen: 60, loss: 0.0016 },
+    400: { name: 'VVN 400 kV', cls: 'VVN', cap: 400, cost: 20, maxLen: 48, loss: 0.0020 },
+    220: { name: 'VVN 220 kV', cls: 'VVN', cap: 200, cost: 11, maxLen: 36, loss: 0.0026 },
+    110: { name: 'VVN 110 kV', cls: 'VVN', cap: 80,  cost: 6,  maxLen: 28, loss: 0.0034 },
+    22:  { name: 'VN 22 kV',   cls: 'VN',  cap: 30,  cost: 3,  maxLen: 14, loss: 0.0060 },
+    11:  { name: 'VN 11 kV',   cls: 'VN',  cap: 14,  cost: 2,  maxLen: 10, loss: 0.0080 },
+    0.4: { name: 'NN 400 V',   cls: 'NN',  cap: 5,   cost: 1,  maxLen: 5,  loss: 0.0120 },
   };
 
   /* výstupní napětí elektráren – vedení k nim musí mít stejnou úroveň */
@@ -427,7 +429,7 @@
       const ai = id2i.get(l.a), bi = id2i.get(l.b);
       const a = ai === undefined ? undefined : busOf.get(ai + ':' + l.level);
       const b = bi === undefined ? undefined : busOf.get(bi + ':' + l.level);
-      l.flow = 0; l.load = 0;
+      l.flow = 0; l.load = 0; l.loss = 0;
       if (a === undefined || b === undefined) continue;
       edges.push({ a, b, w: 1 / Math.max(1, l.len * 0.25), line: l }); // delší vedení = větší „odpor"
     }
@@ -495,30 +497,6 @@
       if (ca.sub >= 0 && nnBus[ca.sub] >= 0) compDem[comp[nnBus[ca.sub]]] += ca.demand;
     }
 
-    let produced = 0, delivered = 0;
-    const gen = new Float64Array(n);
-    const demandAt = new Float64Array(n); // odběr přes rozvodnu (index stavby)
-    const inj = new Float64Array(nb);     // MW injekce na busu
-    for (const ca of cityAssign) {
-      if (ca.sub < 0 || nnBus[ca.sub] < 0) continue;
-      const c = comp[nnBus[ca.sub]];
-      const ratio = compDem[c] > 0 ? Math.min(1, compGen[c] / compDem[c]) : 0;
-      ca.served = ca.demand * ratio;
-      demandAt[ca.sub] += ca.served;
-      inj[nnBus[ca.sub]] -= ca.served;
-      delivered += ca.served;
-    }
-    for (let i = 0; i < n; i++) {
-      if (genBus[i] < 0) { nodes[i].out = 0; continue; }
-      const c = comp[genBus[i]];
-      // elektrárny jedou jen tak, kolik je odběr (přebytek se zahodí)
-      const useRatio = compGen[c] > 0 ? Math.min(1, compDem[c] / compGen[c]) : 0;
-      gen[i] = wantGen[i] * useRatio;
-      produced += gen[i];
-      inj[genBus[i]] += gen[i];
-      nodes[i].out = gen[i];
-    }
-
     // --- DC power flow: L·θ = P, sdružené gradienty (CG) ---
     // Injekce jsou v každé komponentě bilancované, takže je systém řešitelný;
     // CG na Laplacián konverguje řádově rychleji než Gauss–Seidel.
@@ -531,7 +509,7 @@
         out[u] = s;
       }
     };
-    {
+    const solveCG = (inj) => {
       const r = new Float64Array(nb), p = new Float64Array(nb), Ap = new Float64Array(nb);
       applyL(theta, Ap);
       for (let u = 0; u < nb; u++) { r[u] = inj[u] - Ap[u]; p[u] = r[u]; }
@@ -554,7 +532,84 @@
         rs = rs2;
         for (let u = 0; u < nb; u++) p[u] = r[u] + beta * p[u];
       }
+    };
+
+    /* --- fáze 1: bilance bez ztrát, předběžné toky --- */
+    {
+      const inj1 = new Float64Array(nb);
+      for (const ca of cityAssign) {
+        if (ca.sub < 0 || nnBus[ca.sub] < 0) continue;
+        const c = comp[nnBus[ca.sub]];
+        const r1 = compDem[c] > 0 ? Math.min(1, compGen[c] / compDem[c]) : 0;
+        inj1[nnBus[ca.sub]] -= ca.demand * r1;
+      }
+      for (let i = 0; i < n; i++) {
+        if (genBus[i] < 0) continue;
+        const c = comp[genBus[i]];
+        const u1 = compGen[c] > 0 ? Math.min(1, compDem[c] / compGen[c]) : 0;
+        inj1[genBus[i]] += wantGen[i] * u1;
+      }
+      solveCG(inj1);
     }
+
+    /* --- ztráty na vedení z předběžných toků: P_ztr = |P|·(|P|/cap)·loss·délka.
+       Ztráta se rozdělí napůl mezi koncové přípojnice jako dodatečný odběr,
+       výroba ji musí pokrýt navíc nad spotřebu měst. --- */
+    const lossAt = new Float64Array(nb);
+    const compLoss = new Float64Array(nc);
+    for (const e of edges) {
+      if (!e.line) continue;
+      const l = e.line;
+      const flow = (theta[e.a] - theta[e.b]) * e.w;
+      const loss = Math.abs(flow) * (Math.abs(flow) / l.cap) * LINE_TYPES[l.level].loss * l.len;
+      l.loss = loss;
+      lossAt[e.a] += loss / 2;
+      lossAt[e.b] += loss / 2;
+      compLoss[comp[e.a]] += loss;
+    }
+    // komponenta, kterou by ztráty položily, nedodává nic (a bez toků neztrácí)
+    for (let c = 0; c < nc; c++) {
+      if (compLoss[c] > 0 && compGen[c] - compLoss[c] <= 0) compLoss[c] = -1; // značka
+    }
+    for (const e of edges) {
+      if (!e.line) continue;
+      if (compLoss[comp[e.a]] < 0) e.line.loss = 0;
+    }
+    for (let u = 0; u < nb; u++) if (compLoss[comp[u]] < 0) lossAt[u] = 0;
+    for (let c = 0; c < nc; c++) if (compLoss[c] < 0) compLoss[c] = 0;
+
+    /* --- fáze 2: finální bilance – dodávka měst + krytí ztrát --- */
+    let produced = 0, delivered = 0, totalLoss = 0;
+    const gen = new Float64Array(n);
+    const demandAt = new Float64Array(n); // odběr přes rozvodnu (index stavby)
+    const inj = new Float64Array(nb);     // MW injekce na busu
+    for (const ca of cityAssign) {
+      if (ca.sub < 0 || nnBus[ca.sub] < 0) continue;
+      const c = comp[nnBus[ca.sub]];
+      // dodávka měst se krátí tak, aby výroba pokryla i ztráty
+      const ratio = compDem[c] > 0 ? Math.min(1, Math.max(0, compGen[c] - compLoss[c]) / compDem[c]) : 0;
+      ca.served = ca.demand * ratio;
+      demandAt[ca.sub] += ca.served;
+      inj[nnBus[ca.sub]] -= ca.served;
+      delivered += ca.served;
+    }
+    const compServed = new Float64Array(nc);
+    for (const ca of cityAssign) {
+      if (ca.sub >= 0 && nnBus[ca.sub] >= 0) compServed[comp[nnBus[ca.sub]]] += ca.served;
+    }
+    for (let i = 0; i < n; i++) {
+      if (genBus[i] < 0) { nodes[i].out = 0; continue; }
+      const c = comp[genBus[i]];
+      // elektrárny kryjí odběr měst + ztráty (přebytek se zahodí)
+      const useRatio = compGen[c] > 0 ? Math.min(1, (compServed[c] + compLoss[c]) / compGen[c]) : 0;
+      gen[i] = wantGen[i] * useRatio;
+      produced += gen[i];
+      inj[genBus[i]] += gen[i];
+      nodes[i].out = gen[i];
+    }
+    for (let u = 0; u < nb; u++) inj[u] -= lossAt[u];
+    for (let c = 0; c < nc; c++) totalLoss += compLoss[c];
+    solveCG(inj);
 
     // toky hranami + přetížení vedení a traf
     let overloaded = 0, overloadedTrafos = 0;
@@ -638,6 +693,7 @@
 
     this.stats = {
       produced, delivered, demand: totalDemand,
+      losses: totalLoss,
       overloaded, overloadedTrafos,
       unpowered: cityAssign.filter((ca) => (ca.demand > 0 && (ca.served / ca.demand) < 0.5)).length,
       income: income - upkeep * 0.01,

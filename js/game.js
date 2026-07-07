@@ -488,6 +488,8 @@
     const st = sim.stats;
     $('#power').textContent = st.delivered.toFixed(0) + ' / ' + st.demand.toFixed(0) + ' MW';
     $('#power').className = st.demand > 0 && st.delivered / st.demand < 0.7 ? 'bad' : (st.delivered / Math.max(1, st.demand) < 0.98 ? 'warn' : '');
+    $('#losses').textContent = (st.losses || 0).toFixed(1) + ' MW';
+    $('#losses').style.color = (st.losses || 0) > 0.15 * Math.max(1, st.delivered) ? '#ff6a5a' : '';
     $('#income').textContent = (st.income >= 0 ? '+' : '') + (st.income * 60).toFixed(1) + '/min';
     $('#score').textContent = Math.floor(sim.score).toLocaleString('cs-CZ');
     const ph = sim.dayPhase || 0;

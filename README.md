@@ -23,21 +23,28 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
   (L·θ = P), takže v každé přípojnici platí bilance výroba − spotřeba = odtok
   (1. zákon) a součet úbytků po libovolné smyčce je nulový (2. zákon) – i přes
   trafa mezi napěťovými hladinami. Smoke test to numericky ověřuje.
+- **Ztráty na vedení**: každé vedení ztrácí výkon kvadraticky s tokem (I²R),
+  úměrně délce a nepřímo úměrně napěťové hladině – dálkový přenos po 22 kV je
+  několikanásobně ztrátovější než po 110 kV. Ztráty musí pokrýt výroba navíc
+  nad spotřebu měst (řeší se dvoufázově, bilance zůstává přesná) a HUD je
+  průběžně zobrazuje.
 
 ### Napěťové úrovně a trafa
 
 Vedení existuje v sedmi napěťových úrovních – liší se kapacitou, cenou za
 dlaždici a maximální délkou:
 
-| Úroveň | Kapacita | Cena/dl | Max. délka |
-| --- | --- | --- | --- |
-| VVN 800 kV | 800 MW | 34 | 60 |
-| VVN 400 kV | 400 MW | 20 | 48 |
-| VVN 220 kV | 200 MW | 11 | 36 |
-| VVN 110 kV | 80 MW | 6 | 28 |
-| VN 22 kV | 30 MW | 3 | 14 |
-| VN 11 kV | 14 MW | 2 | 10 |
-| NN 400 V | 5 MW | 1 | 5 |
+| Úroveň | Kapacita | Cena/dl | Max. délka | Ztráty/dl¹ |
+| --- | --- | --- | --- | --- |
+| VVN 800 kV | 800 MW | 34 | 60 | 0,16 % |
+| VVN 400 kV | 400 MW | 20 | 48 | 0,20 % |
+| VVN 220 kV | 200 MW | 11 | 36 | 0,26 % |
+| VVN 110 kV | 80 MW | 6 | 28 | 0,34 % |
+| VN 22 kV | 30 MW | 3 | 14 | 0,60 % |
+| VN 11 kV | 14 MW | 2 | 10 | 0,80 % |
+| NN 400 V | 5 MW | 1 | 5 | 1,20 % |
+
+¹ při plném zatížení; ztráta roste kvadraticky s tokem (I²R).
 
 Každá elektrárna vyrábí na svém výstupním napětí (přehrada 400 kV, uhelná
 220 kV, vodní 110 kV, solár a vítr 22 kV) a vedení k ní musí mít stejnou
