@@ -196,6 +196,7 @@ html, body {
 
 /* ---------- schéma rozvodny ---------- */
 #bp-schema { margin-bottom: 8px; }
+.bp-svg { display: block; background: rgba(255,255,255,0.03); border-radius: 6px; }
 .bp-bus {
   font-size: 12px; font-weight: 700; color: #dfe6ef;
   border-bottom: 2px solid #5a6b7d;
