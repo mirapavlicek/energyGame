@@ -272,7 +272,8 @@
         const other = sim.buildings.find((o) => o.id === (l.a === b.id ? l.b : l.a));
         if (!other) continue;
         const inflow = l.b === b.id ? l.flow : -l.flow; // kladné = teče SEM
-        const name = EG.BUILD[other.kind].name + ' [' + other.x + ',' + other.y + ']';
+        const name = ((l.n || 1) > 1 ? l.n + '× ' : '') +
+          EG.BUILD[other.kind].name + ' [' + other.x + ',' + other.y + ']';
         rows.push({
           type: 'line',
           dir: inflow > eps ? 'in' : inflow < -eps ? 'out' : 'idle',
@@ -768,7 +769,8 @@
     const id2b = new Map();
     for (const b of sim.buildings) id2b.set(b.id, b);
 
-    // vedení – barva podle napěťové úrovně, přetížení červeně/oranžově
+    // vedení – barva podle napěťové úrovně, přetížení červeně/oranžově;
+    // paralelní systémy se kreslí vedle sebe (společné stožáry)
     for (const l of sim.lines) {
       const a = id2b.get(l.a), b = id2b.get(l.b);
       if (!a || !b) continue;
@@ -777,7 +779,14 @@
       if (l.load > 1) { r = 0.95; g = 0.2; bl = 0.15; }
       else if (l.load > 0.75) { r = 0.95; g = 0.6; bl = 0.1; }
       const dir = l.flow > 0.5 ? 1 : (l.flow < -0.5 ? -1 : 0);
-      renderer.pushLine(a.x, a.y, b.x, b.y, r, g, bl, 0.95, Math.min(1, l.load), dir);
+      const n = l.n || 1;
+      const dl = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const px = -(b.y - a.y) / dl, py = (b.x - a.x) / dl;
+      for (let k = 0; k < n; k++) {
+        const o = (k - (n - 1) / 2) * 0.18;
+        renderer.pushLine(a.x + px * o, a.y + py * o, b.x + px * o, b.y + py * o,
+          r, g, bl, 0.95, Math.min(1, l.load), dir);
+      }
     }
     // rozestavěné vedení – barvou zvolené úrovně, červeně když je moc dlouhé
     if (tool === 'line' && lineFrom) {

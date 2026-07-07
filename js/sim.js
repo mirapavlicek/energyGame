@@ -383,22 +383,38 @@
         return null;
       }
     }
-    if (this.lines.some((l) => l.level === level &&
-        ((l.a === b1.id && l.b === b2.id) || (l.a === b2.id && l.b === b1.id)))) {
-      this.msg('Už propojeno (' + LT.name + ')', 'warn'); return null;
-    }
     const dist = Math.hypot(b1.x - b2.x, b1.y - b2.y);
     if (dist > LT.maxLen) { this.msg(LT.name + ': příliš daleko (max ' + LT.maxLen + ' dlaždic)', 'warn'); return null; }
+    // stejná trasa a hladina: přidá se další paralelní systém (max 4),
+    // na společných stožárech za 70 % ceny – kapacita i vodivost se násobí
+    const existing = this.lines.find((l) => l.level === level &&
+      ((l.a === b1.id && l.b === b2.id) || (l.a === b2.id && l.b === b1.id)));
+    if (existing) {
+      if (existing.n >= 4) { this.msg(LT.name + ': maximum jsou 4 systémy na trase', 'warn'); return null; }
+      const cost = Math.ceil(dist * LT.cost * 0.7);
+      if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
+      this.money -= cost;
+      existing.n++;
+      existing.cap = LT.cap * existing.n;
+      this.msg(LT.name + ': posíleno na ' + existing.n + '× (kapacita ' + existing.cap + ' MW, −' + cost + ')');
+      return existing;
+    }
     const cost = Math.ceil(dist * LT.cost);
     if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
     this.money -= cost;
-    const l = { id: this.nextId++, a: b1.id, b: b2.id, level, cap: LT.cap, flow: 0, load: 0, len: dist };
+    const l = { id: this.nextId++, a: b1.id, b: b2.id, level, n: 1, cap: LT.cap, flow: 0, load: 0, len: dist };
     this.lines.push(l);
     this.msg(LT.name + ' nataženo (−' + cost + ')');
     return l;
   };
 
   Sim.prototype.removeLine = function (line) {
+    if ((line.n || 1) > 1) {
+      line.n--;
+      line.cap = LINE_TYPES[line.level].cap * line.n;
+      this.msg('Odpojen jeden systém vedení (zbývá ' + line.n + '×)');
+      return;
+    }
     this.lines = this.lines.filter((l) => l !== line);
     this.msg('Vedení odstraněno');
   };
@@ -686,7 +702,8 @@
       const b = bi === undefined ? undefined : busOf.get(bi + ':' + l.level);
       l.flow = 0; l.load = 0; l.loss = 0;
       if (a === undefined || b === undefined) continue;
-      edges.push({ a, b, w: 1 / Math.max(1, l.len * 0.25), line: l }); // delší vedení = větší „odpor"
+      // delší vedení = větší „odpor", paralelní systémy vodivost násobí
+      edges.push({ a, b, w: (l.n || 1) / Math.max(1, l.len * 0.25), line: l });
     }
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
@@ -1118,7 +1135,7 @@
       // paušál servisní smlouvy: 20 % hodnoty zařízení ročně (upkeep se násobí 0,01)
       if (b.contract) upkeep += this.equipValue(b) * 20 / yearLenS;
     }
-    for (const l of this.lines) upkeep += l.len * LINE_TYPES[l.level].cost * 0.01;
+    for (const l of this.lines) upkeep += l.len * LINE_TYPES[l.level].cost * 0.01 * (l.n || 1);
     // --- přeshraniční obchod: import take-or-pay, export za dodané, sankce za nedodané ---
     let xIncome = 0, xCost = 0, xPenalty = 0, exported = 0, imported = 0;
     for (const b of this.buildings) {
