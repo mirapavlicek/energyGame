@@ -12,6 +12,7 @@
   let lineFrom = null;         // budova, odkud táhneme vedení
   let lineLevel = 110;         // zvolená napěťová úroveň vedení
   let selected = null;         // budova otevřená v panelu správy
+  let hoverF = [0, 0];         // přesná pozice kurzoru v dlaždicích (trefa na vedení)
 
   /* barvy vedení podle napěťové úrovně */
   const LEVEL_COLOR = {
@@ -97,7 +98,8 @@
       } else {
         mouse.lastX = e.clientX; mouse.lastY = e.clientY;
       }
-      hover = renderer.screenToTile(mouse.x, mouse.y);
+      hoverF = renderer.screenToTileF(mouse.x, mouse.y);
+      hover = [Math.round(hoverF[0]), Math.round(hoverF[1])];
       updateHoverInfo();
     });
     canvas.addEventListener('wheel', (e) => {
@@ -149,8 +151,8 @@
       return;
     }
     if (tool === 'demolish') {
-      // klik na vedení? – najdi nejbližší segment do 0.6 dlaždice
-      const l = lineNear(gx, gy);
+      // klik na vedení? – přesná pozice myši, nejbližší segment do 0.6 dlaždice
+      const l = lineNear(hoverF[0], hoverF[1]);
       if (l && !sim.buildingAt(gx, gy)) { sim.removeLine(l); return; }
       const b = sim.buildingAt(gx, gy);
       if (sim.demolish(gx, gy) && b === selected) closePanel();
@@ -178,7 +180,7 @@
   }
 
   function lineNear(gx, gy) {
-    let best = null, bestD = 0.7;
+    let best = null, bestD = 0.6;
     for (const l of sim.lines) {
       const a = sim.buildings.find((b) => b.id === l.a);
       const b = sim.buildings.find((o) => o.id === l.b);
@@ -244,7 +246,10 @@
       ...Object.entries(EG.BUILD).filter(([, v]) => !v.hidden).map(([k, v]) => ({
         t: k, label: v.name, key: v.hotkey.toUpperCase(), cost: v.cost, desc: v.desc,
       })),
-      { t: 'demolish', label: 'Zbourat', key: 'X' },
+      {
+        t: 'demolish', label: 'Zbourat', key: 'X',
+        desc: 'Bourá budovy (vrátí 40 % ceny) i vedení – klikni přímo na linku; vícenásobné trasy se odpojují po jednom systému.',
+      },
     ];
     for (const def of tools) {
       const el = document.createElement('button');
@@ -983,7 +988,7 @@
     if (tool !== 'pan') {
       const [gx, gy] = hover;
       let ok = true;
-      if (tool === 'demolish') ok = !!sim.buildingAt(gx, gy) || !!lineNear(gx, gy);
+      if (tool === 'demolish') ok = !!sim.buildingAt(gx, gy) || !!lineNear(hoverF[0], hoverF[1]);
       else if (tool === 'line') ok = !!sim.buildingAt(gx, gy);
       else ok = sim.canPlace(tool, gx, gy).ok;
       renderer.pushSprite(gx, gy, ok ? S.SEL : S.BAD);

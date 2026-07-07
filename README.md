@@ -65,6 +65,9 @@ dvojici staveb se stejnou hladinou přidá druhý (třetí, čtvrtý) systém na
 společných stožárech za 70 % ceny – kapacita i vodivost se násobí, **maximum
 jsou 4 systémy**. Bourání (X) odpojuje po jednom systému.
 
+**Vedení se odstraňuje** nástrojem Zbourat (X) kliknutím přímo na linku –
+vrátí 40 % ceny; vícenásobné trasy se odpojují po jednom systému.
+
 Rozvodna napájená **z více stran si zátěž rozloží**: základní rozdělení dá
 fyzika (impedance), a když se některá trasa přesto přetíží, dispečink jí
 v několika iteracích „přivře kohout" a tok se přelije na paralelní cesty

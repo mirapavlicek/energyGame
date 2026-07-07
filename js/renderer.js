@@ -353,12 +353,18 @@
   };
 
   // převod obrazovka -> dlaždice
-  Renderer.prototype.screenToTile = function (px, py) {
+  /* přesná (neceločíselná) pozice v dlaždicích – např. pro trefu na vedení */
+  Renderer.prototype.screenToTileF = function (px, py) {
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
     const wx = (px - w / 2) / this.cam.zoom + this.cam.x;
     const wy = (py - h / 2) / this.cam.zoom + this.cam.y;
     const gx = (wx / HW + wy / HH) / 2;
     const gy = (wy / HH - wx / HW) / 2;
+    return [gx, gy];
+  };
+
+  Renderer.prototype.screenToTile = function (px, py) {
+    const [gx, gy] = this.screenToTileF(px, py);
     return [Math.round(gx), Math.round(gy)];
   };
 
