@@ -143,7 +143,7 @@ Konkrétní mapu lze sdílet přes URL: `index.html?seed=123456`.
 
 ## Technika
 
-- **WebGL2** – celá scéna instancovaně: statický buffer terénu (25 600 dlaždic
+- **WebGL2** – celá scéna instancovaně: statický buffer terénu (~51 000 dlaždic
   nahraných jednou), dynamický buffer budov/kurzorů, vedení jako instancované
   segmenty s animovanými „pakety" energie ve fragment shaderu.
 - **Sprite atlas** se generuje procedurálně do canvasu při startu – repozitář

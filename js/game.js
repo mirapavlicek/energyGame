@@ -5,7 +5,7 @@
   const A = EG.atlas;
   const S = A.S;
 
-  const MAP_SIZE = 160;
+  const MAP_SIZE = 227; // 227² = 51 529 dlaždic (≥ 2× původních 160² = 25 600)
 
   let map, sim, renderer;
   let tool = 'pan';            // pan | hydro | dam | coal | solar | wind | sub | line | demolish

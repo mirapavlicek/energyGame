@@ -20,6 +20,7 @@
   function generate(size, seed) {
     const rand = mulberry32(seed);
     const N = size;
+    const areaScale = (N * N) / (160 * 160); // obsah mapy roste s plochou
     const type = new Uint8Array(N * N);
     const elev = new Float32Array(N * N);
     const flow = new Float32Array(N * N);      // průtok řeky (0 = není řeka)
@@ -53,7 +54,9 @@
 
     // --- řeky: prameny v horách, stékají po spádu do vody / za okraj ---
     const springs = [];
-    for (let tries = 0; tries < 4000 && springs.length < 14; tries++) {
+    const wantedSprings = Math.round(14 * Math.sqrt(areaScale)); // řeky rostou s délkou mapy
+    const springTries = Math.round(4000 * areaScale);
+    for (let tries = 0; tries < springTries && springs.length < wantedSprings; tries++) {
       const x = 4 + Math.floor(rand() * (N - 8));
       const y = 4 + Math.floor(rand() * (N - 8));
       if (elev[idx(x, y)] > 0.62) {
@@ -123,9 +126,9 @@
 
     // --- města: na rovině, daleko od sebe, radši blízko řeky ---
     const cities = [];
-    const wanted = 11;
+    const wanted = Math.round(11 * areaScale);
     let attempts = 0;
-    while (cities.length < wanted && attempts++ < 20000) {
+    while (cities.length < wanted && attempts++ < 40000) {
       const x = 8 + Math.floor(rand() * (N - 16));
       const y = 8 + Math.floor(rand() * (N - 16));
       const i = idx(x, y);
@@ -180,9 +183,9 @@
       { type: 'pila', label: 'Pila', demand: [8, 16], names: ['Borek', 'Javorina', 'Smrčina'] },
       { type: 'chemicka', label: 'Chemička', demand: [22, 40], names: ['Ústí', 'Zaluží', 'Semtín'] },
     ];
-    const wantedInd = 6;
+    const wantedInd = Math.round(6 * areaScale);
     let indAttempts = 0;
-    while (industries.length < wantedInd && indAttempts++ < 30000) {
+    while (industries.length < wantedInd && indAttempts++ < 60000) {
       const x = 6 + Math.floor(rand() * (N - 12));
       const y = 6 + Math.floor(rand() * (N - 12));
       const i = idx(x, y);
@@ -224,8 +227,9 @@
       () => [3 + Math.floor(rand() * (N - 6)), N - 3],       // jih
       () => [2, 3 + Math.floor(rand() * (N - 6))],           // západ
     ];
+    const wantedX = Math.max(3, Math.round(3 * Math.sqrt(areaScale))); // delší hranice = víc bodů
     let xTries = 0;
-    while (crossings.length < 3 && xTries++ < 4000) {
+    while (crossings.length < wantedX && xTries++ < 8000) {
       const [x, y] = edges[crossings.length % 4]();
       const t = type[idx(x, y)];
       if (t === T.WATER || t === T.RIVER || t === T.MOUNTAIN) continue;
@@ -239,7 +243,8 @@
   const CITY_NAMES = [
     'Vltavín', 'Doubrava', 'Kamenice', 'Lipno', 'Bystřice', 'Orlík',
     'Střekov', 'Jeseník', 'Hluboká', 'Rožmberk', 'Světlá', 'Vranov',
-    'Nechranice', 'Dalešice',
+    'Nechranice', 'Dalešice', 'Mohelno', 'Kružberk', 'Pastviny', 'Seč',
+    'Trnávka', 'Jesenice', 'Žermanice', 'Olešná', 'Hracholusky', 'Skalka',
   ];
 
   EG.T = T;

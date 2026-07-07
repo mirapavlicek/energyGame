@@ -49,6 +49,21 @@ const server = http.createServer((req, res) => {
   console.log('checks:', JSON.stringify(checks));
   if (!checks.webgl2) throw new Error('WebGL2 se nepodařilo inicializovat');
 
+  // --- dvojnásobná mapa: 226² ≈ 51 000 dlaždic a úměrně víc obsahu ---
+  const bigmap = await page.evaluate(() => ({
+    size: EG.game.map.size,
+    tiles: EG.game.map.size * EG.game.map.size,
+    cities: EG.game.map.cities.length,
+    industries: EG.game.map.industries.length,
+    crossings: EG.game.map.crossings.length,
+  }));
+  console.log('mapa:', JSON.stringify(bigmap));
+  if (bigmap.size !== 227) throw new Error('mapa nemá 227 dlaždic na stranu: ' + bigmap.size);
+  if (!(bigmap.tiles >= 2 * 160 * 160)) throw new Error('počet dlaždic není dvojnásobný: ' + bigmap.tiles);
+  if (bigmap.cities < 18) throw new Error('málo měst na velké mapě: ' + bigmap.cities);
+  if (bigmap.industries < 9) throw new Error('málo průmyslu na velké mapě: ' + bigmap.industries);
+  if (bigmap.crossings < 4) throw new Error('málo předávacích bodů na velké mapě: ' + bigmap.crossings);
+
   // ověřit, že se něco vykreslilo – jednobarevná scéna by se zkomprimovala do pár kB
   await page.screenshot({ path: '/tmp/eg_start.png' });
   const shotSize = fs.statSync('/tmp/eg_start.png').size;
