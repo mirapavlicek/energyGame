@@ -1182,6 +1182,18 @@ const server = http.createServer((req, res) => {
   if (xPanel.imp !== 10) throw new Error('sjednání importu klikáním nefunguje: ' + xPanel.imp);
   if (!xPanel.statsText.includes('take-or-pay')) throw new Error('panel neukazuje podmínky smluv');
 
+  // --- cheat „funds" a měna v eurech ---
+  const beforeCheat = await page.evaluate(() => EG.game.sim.money);
+  await page.keyboard.type('funds');
+  await page.waitForTimeout(200);
+  const cheat = await page.evaluate(() => ({
+    money: EG.game.sim.money,
+    hud: document.querySelector('#money').textContent,
+  }));
+  console.log('cheat funds:', JSON.stringify({ delta: Math.round(cheat.money - beforeCheat), hud: cheat.hud }));
+  if (Math.round(cheat.money - beforeCheat) !== 1000) throw new Error('cheat funds nepřidal 1000: ' + (cheat.money - beforeCheat));
+  if (!cheat.hud.includes('€')) throw new Error('měna není v eurech: ' + cheat.hud);
+
   // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 7 úrovní,
   //     různé max. délky přímo v popiscích ---
   const linebar = await page.evaluate(() => {

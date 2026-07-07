@@ -27,6 +27,7 @@
   let mouse = { x: 0, y: 0, down: false, panning: false, lastX: 0, lastY: 0 };
   let speed = 1;
   let lastMsgCount = 0;
+  let cheatBuf = '';           // buffer pro psané cheaty (funds)
 
   const $ = (s) => document.querySelector(s);
 
@@ -114,6 +115,15 @@
 
     window.addEventListener('keydown', (e) => {
       const k = e.key.toLowerCase();
+      // cheat: napiš „funds" a dostaneš 1 000 €
+      if (k.length === 1) {
+        cheatBuf = (cheatBuf + k).slice(-16);
+        if (cheatBuf.endsWith('funds')) {
+          cheatBuf = '';
+          sim.money += 1000;
+          sim.msg('Cheat aktivován: +1 000 €');
+        }
+      }
       const byHotkey = Object.entries(EG.BUILD).find(([, v]) => v.hotkey === k);
       if (byHotkey) {
         if (byHotkey[0] === 'line' && tool === 'line') {
@@ -821,7 +831,7 @@
 
   /* ---------- HUD ---------- */
   function updateHUD() {
-    $('#money').textContent = Math.floor(sim.money).toLocaleString('cs-CZ') + ' ₤';
+    $('#money').textContent = Math.floor(sim.money).toLocaleString('cs-CZ') + ' €';
     const st = sim.stats;
     $('#power').textContent = st.delivered.toFixed(0) + ' / ' + st.demand.toFixed(0) + ' MW';
     $('#power').className = st.demand > 0 && st.delivered / st.demand < 0.7 ? 'bad' : (st.delivered / Math.max(1, st.demand) < 0.98 ? 'warn' : '');
