@@ -65,6 +65,12 @@ dvojici staveb se stejnou hladinou přidá druhý (třetí, čtvrtý) systém na
 společných stožárech za 70 % ceny – kapacita i vodivost se násobí, **maximum
 jsou 4 systémy**. Bourání (X) odpojuje po jednom systému.
 
+Rozvodna napájená **z více stran si zátěž rozloží**: základní rozdělení dá
+fyzika (impedance), a když se některá trasa přesto přetíží, dispečink jí
+v několika iteracích „přivře kohout" a tok se přelije na paralelní cesty
+s volnou kapacitou. Kde alternativa není (radiální přípojka), přetížení
+zůstává a trasu je potřeba posílit.
+
 Každá elektrárna vyrábí na svém výstupním napětí (přehrada 400 kV, uhelná
 220 kV, vodní 110 kV, solár a vítr 22 kV) a vedení k ní musí mít stejnou
 úroveň. **Rozvodna má od výroby jen NN (400 V) přípojnici** – aby připojila
