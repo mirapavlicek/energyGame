@@ -64,9 +64,15 @@ Každá elektrárna vyrábí na svém výstupním napětí (přehrada 400 kV, uh
 220 kV, vodní 110 kV, solár a vítr 22 kV) a vedení k ní musí mít stejnou
 úroveň. **Rozvodna má od výroby jen NN (400 V) přípojnici** – aby připojila
 vyšší napětí, musíš do ní koupit **trafa** (klik na rozvodnu → sekce Trafa).
-Traf je osm typů podle převodu a kapacity (800/400 kV … 11/0,4 kV
-distribuční); více kusů téhož typu sčítá kapacitu a přetížené trafo hlásí
-varování. Města se napájí z NN strany rozvodny.
+Traf je osm typů podle převodu a kapacity (800⇄400 kV … 11⇄0,4 kV
+distribuční); **převádí obousměrně** – 400/220 funguje i jako zvyšovací
+220/400 (např. vyvedení výkonu malých zdrojů nahoru na přenosovou soustavu).
+Více kusů téhož typu sčítá kapacitu a přetížené trafo hlásí varování.
+Města se napájí z NN strany rozvodny.
+
+K prodloužení trasy na stejné hladině slouží **propojovací pole**
+(800/800 … 11/11): levně přidá rozvodně přípojnici dané hladiny bez
+převodu, takže jde řetězit vedení přes průchozí (spínací) stanice.
 
 Typický řetěz: vodní elektrárna (110 kV) → vedení 110 kV → rozvodna
 s trafem 110/22 kV + 22/0,4 kV → město.

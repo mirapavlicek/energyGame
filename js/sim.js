@@ -97,18 +97,27 @@
   /* regulační trafo (přepínač odboček): násobí „vodivost" trafa v power flow */
   const TRAFO_REG = { auto: 1, boost: 3, limit: 0.25 };
 
-  /* Trafa do rozvoden: převádí mezi dvěma úrovněmi, mají kapacitu a cenu.
+  /* Trafa do rozvoden: převádí mezi dvěma úrovněmi OBĚMA směry (nahoru
+     i dolů – 400/220 funguje i jako 220/400), mají kapacitu a cenu.
      Rozvodna bez příslušného trafa danou úroveň vůbec nepřipojí.
-     Města se napájí z NN (400 V) strany – tu má každá rozvodna. */
+     Města se napájí z NN (400 V) strany – tu má každá rozvodna.
+     Propojovací pole (110/110 apod.) nepřevádí – jen přidá přípojnici
+     dané hladiny, aby šla trasa prodloužit dalším vedením. */
   const TRAFOS = {
-    t800_400: { hi: 800, lo: 400, cap: 600, cost: 700, name: '800/400 kV' },
-    t400_220: { hi: 400, lo: 220, cap: 350, cost: 420, name: '400/220 kV' },
-    t400_110: { hi: 400, lo: 110, cap: 250, cost: 380, name: '400/110 kV' },
-    t220_110: { hi: 220, lo: 110, cap: 180, cost: 260, name: '220/110 kV' },
-    t110_22:  { hi: 110, lo: 22,  cap: 60,  cost: 120, name: '110/22 kV' },
-    t22_11:   { hi: 22,  lo: 11,  cap: 25,  cost: 45,  name: '22/11 kV' },
-    t22_04:   { hi: 22,  lo: 0.4, cap: 30,  cost: 60,  name: '22/0,4 kV (distribuční)' },
-    t11_04:   { hi: 11,  lo: 0.4, cap: 12,  cost: 30,  name: '11/0,4 kV (distribuční)' },
+    t800_400: { hi: 800, lo: 400, cap: 600, cost: 700, name: '800⇄400 kV' },
+    t400_220: { hi: 400, lo: 220, cap: 350, cost: 420, name: '400⇄220 kV' },
+    t400_110: { hi: 400, lo: 110, cap: 250, cost: 380, name: '400⇄110 kV' },
+    t220_110: { hi: 220, lo: 110, cap: 180, cost: 260, name: '220⇄110 kV' },
+    t110_22:  { hi: 110, lo: 22,  cap: 60,  cost: 120, name: '110⇄22 kV' },
+    t22_11:   { hi: 22,  lo: 11,  cap: 25,  cost: 45,  name: '22⇄11 kV' },
+    t22_04:   { hi: 22,  lo: 0.4, cap: 30,  cost: 60,  name: '22⇄0,4 kV (distribuční)' },
+    t11_04:   { hi: 11,  lo: 0.4, cap: 12,  cost: 30,  name: '11⇄0,4 kV (distribuční)' },
+    c800: { hi: 800, lo: 800, cost: 300, name: '800/800 kV', coupler: true },
+    c400: { hi: 400, lo: 400, cost: 180, name: '400/400 kV', coupler: true },
+    c220: { hi: 220, lo: 220, cost: 100, name: '220/220 kV', coupler: true },
+    c110: { hi: 110, lo: 110, cost: 60,  name: '110/110 kV', coupler: true },
+    c22:  { hi: 22,  lo: 22,  cost: 25,  name: '22/22 kV',   coupler: true },
+    c11:  { hi: 11,  lo: 11,  cost: 15,  name: '11/11 kV',   coupler: true },
   };
 
   /* Palivo klasických elektráren: sklad, spotřeba na vyrobenou MW·s a cena.
@@ -328,7 +337,7 @@
     if (this.money < t.cost) { this.msg('Nedostatek peněz na trafo', 'warn'); return false; }
     this.money -= t.cost;
     b.trafos[key] = (b.trafos[key] || 0) + 1;
-    this.msg('Trafo ' + t.name + ' instalováno (−' + t.cost + ')');
+    this.msg((t.coupler ? 'Propojovací pole ' : 'Trafo ') + t.name + ' instalováno (−' + t.cost + ')');
     return true;
   };
 
@@ -338,6 +347,7 @@
   };
 
   Sim.prototype.buyTrafoReg = function (b, key) {
+    if (TRAFOS[key] && TRAFOS[key].coupler) { this.msg('Propojovací pole nemá co regulovat', 'warn'); return false; }
     if (b.kind !== 'sub' || !(b.trafos || {})[key]) { this.msg('Nejdřív kup samotné trafo', 'warn'); return false; }
     if (b.trafoReg[key]) { this.msg('Regulace už je instalovaná', 'warn'); return false; }
     const cost = this.trafoRegCost(key);
@@ -674,6 +684,7 @@
       for (const [key, count] of Object.entries(b.trafos)) {
         if (!count) continue;
         const t = TRAFOS[key];
+        if (t.coupler) continue; // propojovací pole nepřevádí – jen přidává přípojnici
         const a = busOf.get(i + ':' + t.hi), bb = busOf.get(i + ':' + t.lo);
         const regW = TRAFO_REG[(b.trafoReg || {})[key]] || 1; // regulace mění vodivost
         edges.push({ a, b: bb, w: 2 * regW, trafo: { sub: b, key, cap: t.cap * count } });
