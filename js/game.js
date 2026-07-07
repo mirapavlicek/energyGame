@@ -604,7 +604,9 @@
     $('#score').textContent = Math.floor(sim.score).toLocaleString('cs-CZ');
     const ph = sim.dayPhase || 0;
     const hours = Math.floor(6 + ph * 24) % 24;
-    $('#clock').textContent = String(hours).padStart(2, '0') + ':00 ' +
+    const seasonIco = { 'jaro': '🌱', 'léto': '☀️', 'podzim': '🍂', 'zima': '❄️' }[sim.seasonName] || '';
+    $('#clock').textContent = 'den ' + (sim.day || 1) + ' · ' + seasonIco + (sim.seasonName || '') + ' · ' +
+      String(hours).padStart(2, '0') + ':00 ' +
       (sim.sun > 0.05 ? '☀' + Math.round(sim.sun * 100) + '%' : '☾') + ' 💨' + Math.round(sim.wind * 100) + '%';
 
     if (sim.messages.length !== lastMsgCount) {
