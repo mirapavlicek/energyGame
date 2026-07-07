@@ -370,6 +370,12 @@
      nejvyšší úroveň, kterou podporují obě stavby */
   Sim.prototype.connect = function (b1, b2, level) {
     if (b1 === b2) return null;
+    // elektrárny (ani zásobníky či hraniční body) se neřetězí napřímo –
+    // výkon se vždy vyvádí přes rozvodnu
+    if (b1.kind !== 'sub' && b2.kind !== 'sub') {
+      this.msg('Vedení musí končit v rozvodně – elektrárny se neřetězí', 'warn');
+      return null;
+    }
     if (level === undefined) {
       level = LEVELS.find((lv) => this.supportsLevel(b1, lv) && this.supportsLevel(b2, lv));
       if (level === undefined) { this.msg('Stavby nemají společnou napěťovou úroveň (chybí trafo?)', 'warn'); return null; }
