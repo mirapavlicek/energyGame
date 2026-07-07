@@ -12,7 +12,7 @@
   const S = {
     WATER: 0, SAND: 1, GRASS: 2, FOREST: 3, HILL: 4, MOUNTAIN: 5, RIVER: 6, RESERVOIR: 7,
     HOUSE: 8, HOUSE2: 9, CENTER: 10, HYDRO: 11, DAM: 12, COAL: 13, SOLAR: 14, WIND: 15,
-    SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19,
+    SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -227,6 +227,28 @@
       c.fillStyle = '#e8c84a';
       c.beginPath(); c.arc(AX - 5, AY - 21, 2, 0, Math.PI * 2); c.fill();
       c.beginPath(); c.arc(AX + 5, AY - 17, 2, 0, Math.PI * 2); c.fill();
+    });
+
+    at(S.FACTORY, (c) => {
+      tile(c, '#a89e8c', '#bcb3a2', '#8a8172');
+      // hala s pilovou střechou
+      box(c, 14, 7, 11, '#7a6f61', '#b3a795', '#948a79');
+      c.fillStyle = '#5d564c';
+      for (const ox of [-10, -3, 4]) {
+        c.beginPath();
+        c.moveTo(AX + ox, AY - 18); c.lineTo(AX + ox + 7, AY - 12);
+        c.lineTo(AX + ox + 7, AY - 15); c.lineTo(AX + ox, AY - 21);
+        c.closePath(); c.fill();
+      }
+      // komín s kouřem
+      c.fillStyle = '#6e6257'; c.fillRect(AX - 14, AY - 38, 6, 27);
+      c.fillStyle = '#83766a'; c.fillRect(AX - 14, AY - 38, 2.5, 27);
+      c.fillStyle = '#c2483a'; c.fillRect(AX - 14, AY - 38, 6, 3);
+      c.fillStyle = 'rgba(200,200,200,0.7)';
+      c.beginPath(); c.arc(AX - 10, AY - 43, 4, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(AX - 6, AY - 49, 5.5, 0, Math.PI * 2); c.fill();
+      // vrata
+      c.fillStyle = '#3f3a33'; c.fillRect(AX + 6, AY - 8, 6, 7);
     });
 
     at(S.SEL, (c) => {

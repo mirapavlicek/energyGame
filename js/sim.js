@@ -118,6 +118,9 @@
       if (Math.abs(c.x - x) <= 1 && Math.abs(c.y - y) <= 1) return { ok: false, why: 'Centrum města' };
       if (c.houses.some(([hx, hy]) => hx === x && hy === y)) return { ok: false, why: 'Zástavba' };
     }
+    for (const ind of m.industries || []) {
+      if (ind.x === x && ind.y === y) return { ok: false, why: 'Průmyslový areál' };
+    }
     const TT = T();
     switch (kind) {
       case 'hydro':
@@ -404,6 +407,16 @@
     return base * curve;
   };
 
+  /* Poptávka podniku v MW – huť a chemička jedou nepřetržitě,
+     důl a pila mají denní směny. */
+  Sim.prototype._industryDemand = function (ind, dayPhase) {
+    const h = (6 + dayPhase * 24) % 24;
+    const shift = (ind.type === 'hut' || ind.type === 'chemicka')
+      ? 0.85 + 0.15 * ((h >= 6 && h < 22) ? 1 : 0)
+      : ((h >= 6 && h < 22) ? 1 : 0.3);
+    return ind.demand * shift;
+  };
+
   /* --- pomalý růst měst: s populací přibývá zástavba na mapě --- */
   Sim.prototype._syncHouses = function (c) {
     if (c.housesBase === undefined) c.housesBase = c.houses.length;
@@ -509,6 +522,24 @@
       cityAssign.push({ city: c, sub: best, demand: d, served: 0 });
     }
 
+    // průmysl -> nejbližší rozvodna s VN přípojnicí (22 nebo 11 kV) v dosahu
+    const indAssign = [];
+    for (const ind of this.map.industries || []) {
+      const d = this._industryDemand(ind, dayPhase);
+      totalDemand += d;
+      let best = -1, bestD = Infinity, bestBus = -1, bestLv = 0;
+      for (const si of subs) {
+        const b = nodes[si];
+        const dist = Math.hypot(b.x - ind.x, b.y - ind.y);
+        if (dist > this.subRange(b) || dist >= bestD) continue;
+        const bus22 = busOf.get(si + ':22'), bus11 = busOf.get(si + ':11');
+        const bus = bus22 !== undefined ? bus22 : bus11;
+        if (bus === undefined) continue; // rozvodna bez VN trafa průmysl nenapojí
+        bestD = dist; best = si; bestBus = bus; bestLv = bus22 !== undefined ? 22 : 11;
+      }
+      indAssign.push({ ind, sub: best, bus: bestBus, level: bestLv, demand: d, served: 0 });
+    }
+
     // --- komponenty souvislosti přes hrany (vedení + trafa) ---
     const adj = Array.from({ length: nb }, () => []);
     for (const e of edges) {
@@ -542,6 +573,9 @@
     for (let i = 0; i < n; i++) if (genBus[i] >= 0) compGen[comp[genBus[i]]] += wantGen[i];
     for (const ca of cityAssign) {
       if (ca.sub >= 0 && nnBus[ca.sub] >= 0) compDem[comp[nnBus[ca.sub]]] += ca.demand;
+    }
+    for (const ia of indAssign) {
+      if (ia.bus >= 0) compDem[comp[ia.bus]] += ia.demand;
     }
 
     // --- DC power flow: L·θ = P, sdružené gradienty (CG) ---
@@ -590,6 +624,12 @@
         const r1 = compDem[c] > 0 ? Math.min(1, compGen[c] / compDem[c]) : 0;
         inj1[nnBus[ca.sub]] -= ca.demand * r1;
       }
+      for (const ia of indAssign) {
+        if (ia.bus < 0) continue;
+        const c = comp[ia.bus];
+        const r1 = compDem[c] > 0 ? Math.min(1, compGen[c] / compDem[c]) : 0;
+        inj1[ia.bus] -= ia.demand * r1;
+      }
       for (let i = 0; i < n; i++) {
         if (genBus[i] < 0) continue;
         const c = comp[genBus[i]];
@@ -625,24 +665,37 @@
     for (let u = 0; u < nb; u++) if (compLoss[comp[u]] < 0) lossAt[u] = 0;
     for (let c = 0; c < nc; c++) if (compLoss[c] < 0) compLoss[c] = 0;
 
-    /* --- fáze 2: finální bilance – dodávka měst + krytí ztrát --- */
-    let produced = 0, delivered = 0, totalLoss = 0;
+    /* --- fáze 2: finální bilance – dodávka měst a průmyslu + krytí ztrát --- */
+    let produced = 0, delivered = 0, indDelivered = 0, totalLoss = 0;
     const gen = new Float64Array(n);
     const demandAt = new Float64Array(n); // odběr přes rozvodnu (index stavby)
     const inj = new Float64Array(nb);     // MW injekce na busu
     for (const ca of cityAssign) {
       if (ca.sub < 0 || nnBus[ca.sub] < 0) continue;
       const c = comp[nnBus[ca.sub]];
-      // dodávka měst se krátí tak, aby výroba pokryla i ztráty
+      // dodávka se krátí tak, aby výroba pokryla i ztráty
       const ratio = compDem[c] > 0 ? Math.min(1, Math.max(0, compGen[c] - compLoss[c]) / compDem[c]) : 0;
       ca.served = ca.demand * ratio;
       demandAt[ca.sub] += ca.served;
       inj[nnBus[ca.sub]] -= ca.served;
       delivered += ca.served;
     }
+    for (const ia of indAssign) {
+      if (ia.bus < 0) continue;
+      const c = comp[ia.bus];
+      const ratio = compDem[c] > 0 ? Math.min(1, Math.max(0, compGen[c] - compLoss[c]) / compDem[c]) : 0;
+      ia.served = ia.demand * ratio;
+      demandAt[ia.sub] += ia.served;
+      inj[ia.bus] -= ia.served;
+      delivered += ia.served;
+      indDelivered += ia.served;
+    }
     const compServed = new Float64Array(nc);
     for (const ca of cityAssign) {
       if (ca.sub >= 0 && nnBus[ca.sub] >= 0) compServed[comp[nnBus[ca.sub]]] += ca.served;
+    }
+    for (const ia of indAssign) {
+      if (ia.bus >= 0) compServed[comp[ia.bus]] += ia.served;
     }
     for (let i = 0; i < n; i++) {
       if (genBus[i] < 0) { nodes[i].out = 0; continue; }
@@ -678,6 +731,23 @@
       this._lastOverloadWarn = Math.floor(this.time);
       if (overloaded > 0) this.msg('Vedení přetíženo! Postav paralelní trasu nebo vyšší napětí.', 'warn');
       if (overloadedTrafos > 0) this.msg('Trafo přetíženo! Přikup další kus do rozvodny.', 'warn');
+    }
+
+    // --- průmysl: stav napájení, hlášení odstávek ---
+    for (const ia of indAssign) {
+      const ind = ia.ind;
+      const ratio = ia.demand > 0 ? ia.served / ia.demand : 0;
+      ind.powered = ratio;
+      if (ratio < 0.9) {
+        ind.downTime += dt;
+        if (ind.downTime > 15 && !ind._warned) {
+          ind._warned = true;
+          this.msg(ind.name + ' stojí bez proudu! (potřebuje VN přípojku z rozvodny)', 'warn');
+        }
+      } else {
+        ind.downTime = 0;
+        ind._warned = false;
+      }
     }
 
     // --- města: spokojenost, pomalý růst, výpadky ---
@@ -739,18 +809,21 @@
       for (const [key, count] of Object.entries(b.trafos || {})) upkeep += TRAFOS[key].cost * 0.004 * count;
     }
     for (const l of this.lines) upkeep += l.len * LINE_TYPES[l.level].cost * 0.01;
-    const income = delivered * PRICE_PER_MWH;
+    // průmysl platí za MWh o 40 % víc než města
+    const income = (delivered - indDelivered) * PRICE_PER_MWH + indDelivered * PRICE_PER_MWH * 1.4;
     this.money += (income - upkeep * 0.01) * dt;
     this.score += delivered * dt * 0.01;
 
     this.stats = {
-      produced, delivered, demand: totalDemand,
+      produced, delivered, indDelivered, demand: totalDemand,
       losses: totalLoss,
       overloaded, overloadedTrafos,
-      unpowered: cityAssign.filter((ca) => (ca.demand > 0 && (ca.served / ca.demand) < 0.5)).length,
+      unpowered: cityAssign.filter((ca) => (ca.demand > 0 && (ca.served / ca.demand) < 0.5)).length +
+        indAssign.filter((ia) => (ia.demand > 0 && (ia.served / ia.demand) < 0.5)).length,
       income: income - upkeep * 0.01,
     };
     this.cityAssign = cityAssign;
+    this.indAssign = indAssign;
   };
 
   EG.Sim = Sim;

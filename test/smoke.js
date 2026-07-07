@@ -324,6 +324,7 @@ const server = http.createServer((req, res) => {
       }
     });
     for (const ca of sim.cityAssign) if (ca.sub >= 0) add(ca.sub + ':0.4', -ca.served);
+    for (const ia of sim.indAssign) if (ia.sub >= 0) add(ia.sub + ':' + ia.level, -ia.served);
     let kclErr = 0;
     for (const v of bal.values()) kclErr = Math.max(kclErr, Math.abs(v));
 
@@ -447,6 +448,82 @@ const server = http.createServer((req, res) => {
   if (!cities.samePopDiffer) throw new Error('dvě města se stejnou populací mají stejnou potřebu na obyvatele');
   if (!cities.grew) throw new Error('růst populace nepřidává domy: ' + cities.housesBefore + ' -> ' + cities.housesGrown);
   if (!cities.shrank) throw new Error('úbytek populace neubírá domy');
+
+  // --- průmysl jako samostatný prvek: generuje se, napájí se z VN a platí víc ---
+  const industry = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const inds = map.industries || [];
+    const types = new Set(inds.map((o) => o.type));
+    const ind = inds[0];
+    // rozvodna hned u podniku – zatím bez VN trafa
+    let sub = null;
+    for (let r = 1; r <= 4 && !sub; r++)
+      for (let dy = -r; dy <= r && !sub; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('sub', ind.x + dx, ind.y + dy).ok) { sub = sim.place('sub', ind.x + dx, ind.y + dy); break; }
+    let coal = null;
+    for (let r = 1; r <= 6 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.buyTrafo(sub, 't220_110');
+    sim.buyTrafo(sub, 't110_22');
+    sim.connect(coal, sub, 220);
+    // bez VN? sub má 22 z t110_22 – nejdřív ověř bez něj nejde: uděláme druhý sim
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const poweredWithVN = ind.powered;
+    const servedMW = (sim.indAssign.find((a) => a.ind === ind) || {}).served || 0;
+    const level = (sim.indAssign.find((a) => a.ind === ind) || {}).level;
+    // srovnání příjmů: průmysl platí 1.4×
+    const ca = sim.indAssign.find((a) => a.ind === ind);
+    const incomeOk = sim.stats.indDelivered > 0;
+
+    // druhý scénář: rozvodna bez VN trafa průmysl nenapojí
+    const map2 = EG.generateMap(160, 42);
+    const sim2 = new EG.Sim(map2);
+    sim2.money = 1000000;
+    const ind2 = map2.industries[0];
+    let sub2 = null;
+    for (let r = 1; r <= 4 && !sub2; r++)
+      for (let dy = -r; dy <= r && !sub2; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim2.canPlace('sub', ind2.x + dx, ind2.y + dy).ok) { sub2 = sim2.place('sub', ind2.x + dx, ind2.y + dy); break; }
+    let coal2 = null;
+    for (let r = 1; r <= 6 && !coal2; r++)
+      for (let dy = -r; dy <= r && !coal2; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim2.canPlace('coal', sub2.x + dx, sub2.y + dy).ok) { coal2 = sim2.place('coal', sub2.x + dx, sub2.y + dy); break; }
+    sim2.buyTrafo(sub2, 't220_110'); // jen VVN převod, žádné VN
+    sim2.connect(coal2, sub2, 220);
+    for (let i = 0; i < 30; i++) sim2.tick(0.1);
+    const poweredNoVN = ind2.powered;
+
+    // na podniku nejde stavět
+    const buildOnInd = sim.canPlace('coal', ind.x, ind.y);
+
+    // denní směny: důl/pila v noci šetří, huť jede pořád
+    const shiftInd = inds.find((o) => o.type === 'dul' || o.type === 'pila');
+    const contInd = inds.find((o) => o.type === 'hut' || o.type === 'chemicka');
+    const shiftOk = shiftInd ? sim._industryDemand(shiftInd, 0.3) > sim._industryDemand(shiftInd, 0.9) * 2 : true;
+    const contOk = contInd ? sim._industryDemand(contInd, 0.9) > contInd.demand * 0.7 : true;
+
+    return {
+      nInd: inds.length, nTypes: types.size,
+      demands: inds.map((o) => +o.demand.toFixed(0)),
+      poweredWithVN: +poweredWithVN.toFixed(2), servedMW: +servedMW.toFixed(1), level,
+      incomeOk,
+      poweredNoVN: +(poweredNoVN || 0).toFixed(2),
+      buildOnIndRejected: !buildOnInd.ok,
+      shiftOk, contOk,
+    };
+  });
+  console.log('průmysl:', JSON.stringify(industry));
+  if (industry.nInd < 4) throw new Error('málo podniků na mapě: ' + industry.nInd);
+  if (industry.nTypes < 2) throw new Error('podniky nemají různé typy');
+  if (!(industry.poweredWithVN > 0.9)) throw new Error('podnik s VN přípojkou není napájen: ' + industry.poweredWithVN);
+  if (industry.level !== 22 && industry.level !== 11) throw new Error('průmysl se nenapájí z VN: ' + industry.level);
+  if (!industry.incomeOk) throw new Error('dodávka průmyslu se nepočítá do příjmů');
+  if (!(industry.poweredNoVN < 0.1)) throw new Error('rozvodna bez VN trafa nemá průmysl napojit: ' + industry.poweredNoVN);
+  if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
+  if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
   // --- panel správy v živé hře: klik na budovu jako hráč ---
   const panel = await page.evaluate(() => {

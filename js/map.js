@@ -172,7 +172,50 @@
         }
     }
 
-    return { size: N, type, elev, flow, flowDir, cities, seed, T, idx };
+    // --- průmysl: samostatné podniky s velkou spotřebou (napájí se z VN) ---
+    const industries = [];
+    const IND_DEFS = [
+      { type: 'dul', label: 'Důl', demand: [18, 32], names: ['Anna', 'Barbora', 'Mayrau', 'Michal'] },
+      { type: 'hut', label: 'Huť', demand: [28, 48], names: ['Vítkov', 'Poldi', 'Liskovec'] },
+      { type: 'pila', label: 'Pila', demand: [8, 16], names: ['Borek', 'Javorina', 'Smrčina'] },
+      { type: 'chemicka', label: 'Chemička', demand: [22, 40], names: ['Ústí', 'Zaluží', 'Semtín'] },
+    ];
+    const wantedInd = 6;
+    let indAttempts = 0;
+    while (industries.length < wantedInd && indAttempts++ < 30000) {
+      const x = 6 + Math.floor(rand() * (N - 12));
+      const y = 6 + Math.floor(rand() * (N - 12));
+      const i = idx(x, y);
+      const t = type[i];
+      if (t === T.WATER || t === T.RIVER || t === T.MOUNTAIN) continue;
+      // dál od měst i ostatních podniků
+      let tooClose = false;
+      for (const c of cities) if (Math.abs(c.x - x) + Math.abs(c.y - y) < 12) { tooClose = true; break; }
+      for (const ind of industries) if (Math.abs(ind.x - x) + Math.abs(ind.y - y) < 22) { tooClose = true; break; }
+      if (tooClose) continue;
+      // typ podle terénu v okolí
+      let nearForest = false, nearHill = false, nearRiver = false;
+      for (let ry = -3; ry <= 3; ry++) for (let rx = -3; rx <= 3; rx++) {
+        const nx = x + rx, ny = y + ry;
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        const tt = type[idx(nx, ny)];
+        if (tt === T.FOREST) nearForest = true;
+        if (tt === T.HILL || tt === T.MOUNTAIN) nearHill = true;
+        if (tt === T.RIVER) nearRiver = true;
+      }
+      const def = nearHill ? IND_DEFS[0]
+        : nearRiver ? IND_DEFS[3]
+        : nearForest ? IND_DEFS[2]
+        : IND_DEFS[1];
+      const demand = def.demand[0] + rand() * (def.demand[1] - def.demand[0]);
+      industries.push({
+        x, y, type: def.type,
+        name: def.label + ' ' + def.names[Math.floor(rand() * def.names.length)],
+        demand, powered: 0, downTime: 0,
+      });
+    }
+
+    return { size: N, type, elev, flow, flowDir, cities, industries, seed, T, idx };
   }
 
   const CITY_NAMES = [
