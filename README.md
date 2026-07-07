@@ -82,6 +82,9 @@ a spravovat v panelu:
   při poruše) za přirážku 20 %.
 - **Modernizace** (3 úrovně) – +25 % výkonu za úroveň a pomalejší opotřebení,
   mírně vyšší provozní náklady.
+- **Schéma a toky** (jen rozvodna) – živé jednopólové schéma: přípojnice po
+  napěťových hladinách, u každého vedení odkud/kam a kolik MW teče, toky přes
+  trafa mezi hladinami (se zatížením) a odběry měst i průmyslu.
 - **Trafa** (jen rozvodna) – nákup transformátorů podle typu a kapacity,
   zobrazuje se jejich aktuální zatížení.
 - **Větší dosah NN distribuce** (jen rozvodna) – +2 dlaždice za úroveň.
