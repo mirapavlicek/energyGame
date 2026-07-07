@@ -104,8 +104,10 @@ a spravovat v panelu:
 - **Technický stav** – budovy se provozem opotřebovávají a ztrácí výkon;
   pod 20 % stavu hrozí **porucha** a úplný výpadek.
 - **Servis** – jednorázová oprava, cena roste se zanedbaností (a s poruchou).
-- **Servisní smlouva** – technici vyjíždějí automaticky (pod 50 % stavu nebo
-  při poruše) za přirážku 20 %.
+- **Servisní smlouva** – paušální údržba: zařízení se **neopotřebovává ani
+  neporouchá** (technici průběžně udržují a postupně spraví i stávající
+  poškození), ale stojí **20 % ceny zařízení ročně** – za 5 let tedy
+  zaplatíš jako za nové. U rozvodny se paušál počítá včetně traf.
 - **Palivo** (klasické elektrárny) – uhelná má sklad uhlí (240 t, při stavbě
   z poloviny plný) a spotřebovává ho podle skutečně vyrobených MWh. **Bez
   uhlí stojí!** Palivo se kupuje v panelu, nebo **smlouvou na dodávky**

@@ -419,20 +419,33 @@
     return Math.ceil(8 + BUILD[b.kind].cost * 0.3 * (1 - b.cond) + (b.broken ? BUILD[b.kind].cost * 0.15 : 0));
   };
 
-  Sim.prototype.service = function (b, auto) {
-    const base = this.serviceCost(b);
-    const cost = auto ? Math.ceil(base * 1.2) : base; // smlouva má přirážku 20 %
-    if (this.money < cost) { if (!auto) this.msg('Nedostatek peněz na servis', 'warn'); return false; }
+  Sim.prototype.service = function (b) {
+    const cost = this.serviceCost(b);
+    if (this.money < cost) { this.msg('Nedostatek peněz na servis', 'warn'); return false; }
     this.money -= cost;
     b.cond = 1;
     b.broken = false;
-    this.msg((auto ? 'Smluvní servis: ' : 'Servis: ') + BUILD[b.kind].name + ' (−' + cost + ')');
+    this.msg('Servis: ' + BUILD[b.kind].name + ' (−' + cost + ')');
     return true;
+  };
+
+  /* hodnota zařízení pro paušál smlouvy (rozvodna včetně traf) */
+  Sim.prototype.equipValue = function (b) {
+    let v = BUILD[b.kind].cost;
+    for (const [key, count] of Object.entries(b.trafos || {})) v += TRAFOS[key].cost * count;
+    return v;
+  };
+
+  /* roční paušál servisní smlouvy: 20 % ceny zařízení
+     (za 5 let se tak zaplatí jako výměna za nové) */
+  Sim.prototype.contractYearCost = function (b) {
+    return Math.round(this.equipValue(b) * 0.2);
   };
 
   Sim.prototype.setContract = function (b, on) {
     b.contract = !!on;
-    this.msg('Servisní smlouva ' + (b.contract ? 'uzavřena' : 'vypovězena') + ' – ' + BUILD[b.kind].name);
+    this.msg('Servisní smlouva ' + (b.contract ? 'uzavřena' : 'vypovězena') + ' – ' + BUILD[b.kind].name +
+      (b.contract ? ' (paušál ' + this.contractYearCost(b) + '/rok, bez oprav a opotřebení)' : ''));
   };
 
   Sim.prototype.upgradeCost = function (b) {
@@ -1070,6 +1083,16 @@
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
       if (!WEAR[b.kind]) continue; // předávací body se neopotřebovávají
+      if (b.contract) {
+        // paušální smlouva: průběžná údržba – žádné opotřebení ani poruchy,
+        // technici postupně spraví i stávající poškození
+        b.cond = Math.min(1, b.cond + 0.15 * dt);
+        if (b.broken && b.cond >= 0.5) {
+          b.broken = false;
+          this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] opravena v rámci servisní smlouvy');
+        }
+        continue;
+      }
       if (!b.broken) {
         // elektrárny se opotřebovávají podle vytížení, rozvodny podle přenášeného odběru
         let util;
@@ -1084,20 +1107,16 @@
           this.msg('PORUCHA: ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] je mimo provoz!', 'warn');
         }
       }
-      // smluvní servis: technici vyjíždějí automaticky
-      if (b.contract && (b.broken || b.cond < 0.5)) {
-        if (!this.service(b, true) && this._contractWarnT !== Math.floor(this.time)) {
-          this._contractWarnT = Math.floor(this.time);
-          this.msg('Smluvní servis čeká – nedostatek peněz', 'warn');
-        }
-      }
     }
 
     // --- ekonomika ---
     let upkeep = 0;
+    const yearLenS = this.dayLen * YEAR_DAYS;
     for (const b of this.buildings) {
       upkeep += BUILD[b.kind].upkeep * (1 + 0.25 * (b.level - 1));
       for (const [key, count] of Object.entries(b.trafos || {})) upkeep += TRAFOS[key].cost * 0.004 * count;
+      // paušál servisní smlouvy: 20 % hodnoty zařízení ročně (upkeep se násobí 0,01)
+      if (b.contract) upkeep += this.equipValue(b) * 20 / yearLenS;
     }
     for (const l of this.lines) upkeep += l.len * LINE_TYPES[l.level].cost * 0.01;
     // --- přeshraniční obchod: import take-or-pay, export za dodané, sankce za nedodané ---
