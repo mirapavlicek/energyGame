@@ -264,6 +264,94 @@ const server = http.createServer((req, res) => {
   if (!mgmt.tooFarNull) throw new Error('110kV vedení delší než 28 dlaždic prošlo');
   if (!(mgmt.trafoLoad110 > 0)) throw new Error('tok přes trafo se neměří');
 
+  // --- Kirchhoffovy zákony: bilance v každé přípojnici + nulový součet úbytků po smyčce ---
+  const kirchhoff = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    // uhelná (220 kV) + rozvodna u města s plnou kaskádou traf
+    const c = map.cities[0];
+    let s1 = null;
+    for (let dy = -3; dy <= 3 && !s1; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { s1 = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(s1, 't220_110'); sim.buyTrafo(s1, 't110_22'); sim.buyTrafo(s1, 't22_04');
+    let coal = null;
+    for (let r = 2; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', s1.x + dx, s1.y + dy).ok) { coal = sim.place('coal', s1.x + dx, s1.y + dy); break; }
+    // dvě průchozí rozvodny na 220 kV -> smyčka coal–s2–s3–s1–coal
+    const passSubs = [];
+    for (let r = 2; r <= 10 && passSubs.length < 2; r++)
+      for (let dy = -r; dy <= r && passSubs.length < 2; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (passSubs.some((s) => Math.hypot(s.x - (coal.x + dx), s.y - (coal.y + dy)) < 2)) continue;
+        if (sim.canPlace('sub', coal.x + dx, coal.y + dy).ok) {
+          const s = sim.place('sub', coal.x + dx, coal.y + dy);
+          sim.buyTrafo(s, 't220_110');
+          passSubs.push(s);
+          if (passSubs.length >= 2) break;
+        }
+      }
+    const [s2, s3] = passSubs;
+    const loop = [coal, s2, s3, s1];
+    const loopLines = [];
+    for (let i = 0; i < 4; i++) {
+      const l = sim.connect(loop[i], loop[(i + 1) % 4], 220);
+      if (!l) return { fail: 'smyčku se nepodařilo postavit (' + i + ')' };
+      loopLines.push(l);
+    }
+    for (let i = 0; i < 50; i++) sim.tick(0.1);
+
+    // 1. Kirchhoffův zákon: součet toků do každé přípojnice = injekce
+    const bal = new Map();
+    const add = (key, v) => bal.set(key, (bal.get(key) || 0) + v);
+    const idx = new Map();
+    sim.buildings.forEach((b, i) => idx.set(b.id, i));
+    for (const l of sim.lines) {
+      add(idx.get(l.a) + ':' + l.level, -l.flow);
+      add(idx.get(l.b) + ':' + l.level, +l.flow);
+    }
+    sim.buildings.forEach((b, i) => {
+      if (b.kind === 'sub') {
+        for (const [key, f] of Object.entries(b.trafoFlow || {})) {
+          const t = EG.TRAFOS[key];
+          add(i + ':' + t.hi, -f);
+          add(i + ':' + t.lo, +f);
+        }
+      } else {
+        add(i + ':' + EG.GEN_LEVEL[b.kind], b.out);
+      }
+    });
+    for (const ca of sim.cityAssign) if (ca.sub >= 0) add(ca.sub + ':0.4', -ca.served);
+    let kclErr = 0;
+    for (const v of bal.values()) kclErr = Math.max(kclErr, Math.abs(v));
+
+    // 2. Kirchhoffův zákon: součet úbytků „napětí" po smyčce = 0
+    // (úbytek na vedení = tok / vodivost; orientace po směru obcházení)
+    let kvlDrop = 0, flowsSum = 0;
+    for (let i = 0; i < 4; i++) {
+      const u = loop[i], v = loop[(i + 1) % 4];
+      const l = loopLines[i];
+      const sign = l.a === u.id ? 1 : -1;
+      const w = 1 / Math.max(1, l.len * 0.25);
+      kvlDrop += sign * l.flow / w;
+      flowsSum += Math.abs(l.flow);
+    }
+    return {
+      powered: +(c.powered || 0).toFixed(2),
+      kclErr: +kclErr.toFixed(5),
+      kvlDrop: +kvlDrop.toFixed(5),
+      loopCarriesFlow: flowsSum > 1,
+      nBuses: bal.size,
+    };
+  });
+  console.log('Kirchhoff:', JSON.stringify(kirchhoff));
+  if (kirchhoff.fail) throw new Error(kirchhoff.fail);
+  if (!(kirchhoff.powered > 0.9)) throw new Error('smyčková síť nenapájí město: ' + kirchhoff.powered);
+  if (!kirchhoff.loopCarriesFlow) throw new Error('smyčkou nic neteče, KVL test je bezzubý');
+  if (!(kirchhoff.kclErr < 0.01)) throw new Error('1. Kirchhoffův zákon porušen, max odchylka ' + kirchhoff.kclErr + ' MW');
+  if (!(Math.abs(kirchhoff.kvlDrop) < 0.01)) throw new Error('2. Kirchhoffův zákon porušen, součet úbytků ' + kirchhoff.kvlDrop);
+
   // --- panel správy v živé hře: klik na budovu jako hráč ---
   const panel = await page.evaluate(() => {
     const { sim, map, renderer } = EG.game;

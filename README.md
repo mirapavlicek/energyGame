@@ -19,6 +19,10 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
 - **Toky v síti** se počítají zjednodušeným DC power-flow modelem – energie si
   sama najde cesty, delší vedení „klade větší odpor". Přetížené trasy červeně
   blikají a chtějí paralelní posilu nebo vyšší napěťovou hladinu.
+- Model **splňuje Kirchhoffovy zákony**: toky se řeší z uzlových potenciálů
+  (L·θ = P), takže v každé přípojnici platí bilance výroba − spotřeba = odtok
+  (1. zákon) a součet úbytků po libovolné smyčce je nulový (2. zákon) – i přes
+  trafa mezi napěťovými hladinami. Smoke test to numericky ověřuje.
 
 ### Napěťové úrovně a trafa
 

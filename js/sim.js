@@ -155,6 +155,7 @@
     if (kind === 'sub') {
       b.trafos = {};     // klíč z TRAFOS -> počet kusů
       b.trafoLoad = {};  // klíč -> aktuální zatížení 0..1+
+      b.trafoFlow = {};  // klíč -> tok v MW (kladný = z vyšší na nižší hladinu)
     }
     this.buildings.push(b);
     if (kind === 'dam') this._applyDam(b);
@@ -434,6 +435,7 @@
       const b = nodes[i];
       if (b.kind !== 'sub' || b.broken) continue;
       b.trafoLoad = {};
+      b.trafoFlow = {};
       for (const [key, count] of Object.entries(b.trafos)) {
         if (!count) continue;
         const t = TRAFOS[key];
@@ -565,6 +567,7 @@
       } else {
         const load = Math.abs(flow) / e.trafo.cap;
         e.trafo.sub.trafoLoad[e.trafo.key] = load;
+        e.trafo.sub.trafoFlow[e.trafo.key] = flow; // kladný = hi -> lo
         if (load > 1) overloadedTrafos++;
       }
     }
