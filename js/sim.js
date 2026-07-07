@@ -77,6 +77,12 @@
     t11_04:   { hi: 11,  lo: 0.4, cap: 12,  cost: 30,  name: '11/0,4 kV (distribuční)' },
   };
 
+  /* Palivo klasických elektráren: sklad, spotřeba na vyrobenou MW·s a cena.
+     Bez paliva elektrárna stojí – nakupuje se v panelu (nebo smlouvou). */
+  const FUEL = {
+    coal: { name: 'uhlí', unit: 't', cap: 240, perMW: 0.0045, price: 4 },
+  };
+
   const SUB_RANGE = 6;        // dosah rozvodny k městu (NN distribuce)
   const PRICE_PER_MWH = 0.055; // příjem za dodanou MW za sekundu hry
 
@@ -164,6 +170,10 @@
       b.trafos = {};     // klíč z TRAFOS -> počet kusů
       b.trafoLoad = {};  // klíč -> aktuální zatížení 0..1+
       b.trafoFlow = {};  // klíč -> tok v MW (kladný = z vyšší na nižší hladinu)
+    }
+    if (FUEL[kind]) {
+      b.fuel = FUEL[kind].cap * 0.5; // startovní zásoba na rozjezd
+      b.fuelContract = false;        // automatické dodávky za přirážku
     }
     this.buildings.push(b);
     if (kind === 'dam') this._applyDam(b);
@@ -345,6 +355,38 @@
     return true;
   };
 
+  /* nákup paliva: doplní sklad (nebo kolik peníze dovolí) */
+  Sim.prototype.fuelCost = function (b, auto) {
+    const fd = FUEL[b.kind];
+    if (!fd) return null;
+    const missing = fd.cap - b.fuel;
+    if (missing < 1) return 0;
+    return Math.ceil(missing * fd.price * (auto ? 1.15 : 1));
+  };
+
+  Sim.prototype.buyFuel = function (b, auto) {
+    const fd = FUEL[b.kind];
+    if (!fd) { this.msg('Tahle stavba palivo nepotřebuje', 'warn'); return false; }
+    const unitPrice = fd.price * (auto ? 1.15 : 1);
+    const missing = fd.cap - b.fuel;
+    if (missing < 1) { if (!auto) this.msg('Sklad paliva je plný', 'warn'); return false; }
+    const affordable = Math.min(missing, Math.floor(this.money / unitPrice));
+    if (affordable < 1) { if (!auto) this.msg('Nedostatek peněz na palivo', 'warn'); return false; }
+    const cost = Math.ceil(affordable * unitPrice);
+    this.money -= cost;
+    b.fuel += affordable;
+    this.msg((auto ? 'Smluvní dodávka: ' : 'Nákup paliva: ') + Math.round(affordable) + ' ' + fd.unit +
+      ' ' + fd.name + ' (−' + cost + ')' + (affordable < missing ? ' – jen na co byly peníze' : ''));
+    return true;
+  };
+
+  Sim.prototype.setFuelContract = function (b, on) {
+    if (!FUEL[b.kind]) return;
+    b.fuelContract = !!on;
+    this.msg('Smlouva na dodávky paliva ' + (b.fuelContract ? 'uzavřena' : 'vypovězena') +
+      ' – ' + BUILD[b.kind].name);
+  };
+
   Sim.prototype.rangeUpgradeCost = function (b) {
     if (b.kind !== 'sub' || b.rangeLevel >= MAX_RANGE_LEVEL) return null;
     return 80 * (b.rangeLevel + 1);
@@ -373,7 +415,7 @@
         const f = m.flow[m.idx(b.x, b.y)] * fx.hydro;
         return Math.min(150, 30 + f * 7 + (b.reservoir || 0) * 3);
       }
-      case 'coal': return 90;
+      case 'coal': return (b.fuel === undefined || b.fuel > 0) ? 90 : 0; // bez uhlí stojí
       case 'solar': return 35 * sun * fx.solar;
       case 'wind': {
         const TT = T();
@@ -808,6 +850,31 @@
       }
     }
 
+    // --- palivo: spotřeba dle vyrobených MW, došlé palivo zastaví výrobu ---
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      const fd = FUEL[b.kind];
+      if (!fd) continue;
+      if (b.fuel > 0 && gen[i] > 0) {
+        b.fuel = Math.max(0, b.fuel - fd.perMW * gen[i] * dt);
+        if (b.fuel === 0) {
+          this.msg('DOŠLO PALIVO: ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] stojí!', 'warn');
+        } else if (b.fuel < fd.cap * 0.2 && !b._fuelWarned) {
+          b._fuelWarned = true;
+          this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + ']: palivo pod 20 %', 'warn');
+        } else if (b.fuel >= fd.cap * 0.2) {
+          b._fuelWarned = false;
+        }
+      }
+      // smluvní dodávky: doplní sklad pod čtvrtinou
+      if (b.fuelContract && b.fuel < fd.cap * 0.25) {
+        if (!this.buyFuel(b, true) && this._fuelWarnT !== Math.floor(this.time)) {
+          this._fuelWarnT = Math.floor(this.time);
+          this.msg('Smluvní dodávka paliva čeká – nedostatek peněz', 'warn');
+        }
+      }
+    }
+
     // --- opotřebení, poruchy a servisní smlouvy ---
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
@@ -860,6 +927,7 @@
 
   EG.Sim = Sim;
   EG.BUILD = BUILD;
+  EG.FUEL = FUEL;
   EG.LEVELS = LEVELS;
   EG.LINE_TYPES = LINE_TYPES;
   EG.GEN_LEVEL = GEN_LEVEL;

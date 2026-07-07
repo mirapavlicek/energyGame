@@ -373,6 +373,20 @@
     contract.id = 'bp-btn-contract';
     contract.title = 'Technici vyjedou automaticky, když stav klesne pod 50 % nebo při poruše.';
 
+    if (EG.FUEL[b.kind]) {
+      const fd = EG.FUEL[b.kind];
+      const fuel = bpButton('⛽ Koupit ' + fd.name + ' <span class="cost" id="bp-fuel-cost"></span>', '',
+        () => sim.buyFuel(b));
+      fuel.id = 'bp-btn-fuel';
+      fuel.title = 'Doplní sklad (' + fd.cap + ' ' + fd.unit + ') za ' + fd.price + '/' + fd.unit +
+        '. Bez paliva elektrárna stojí!';
+      const fc = bpButton('🚚 Smlouva na palivo <span class="cost">+15 % k ceně</span>',
+        b.fuelContract ? 'on' : '',
+        () => sim.setFuelContract(b, !b.fuelContract));
+      fc.id = 'bp-btn-fuelcontract';
+      fc.title = 'Dodávky přijedou automaticky, když zásoba klesne pod 25 %.';
+    }
+
     const up = bpButton('⚙ Modernizace <span class="cost" id="bp-up-cost"></span>', '',
       () => sim.upgrade(b));
     up.id = 'bp-btn-up';
@@ -428,6 +442,16 @@
     } else {
       rows += 'Výkon: <span class="val">' + b.out.toFixed(1) + ' / ' + b.gen.toFixed(1) + ' MW</span><br>';
       rows += 'Výstupní napětí: <span class="val">' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + '</span><br>';
+      const fd = EG.FUEL[b.kind];
+      if (fd) {
+        const pct = Math.round(b.fuel / fd.cap * 100);
+        const cls = b.fuel <= 0 ? 'bad' : pct < 20 ? 'bad' : '';
+        rows += 'Palivo (' + fd.name + '): <span class="val ' + cls + '">' +
+          Math.round(b.fuel) + ' / ' + fd.cap + ' ' + fd.unit + ' (' + pct + ' %)</span>';
+        if (b.fuel <= 0) rows += ' <span class="bad">⚠ STOJÍ BEZ PALIVA</span>';
+        if (b.fuelContract) rows += ' · <span class="val">smlouva ✓</span>';
+        rows += '<br>';
+      }
     }
     rows += 'Úroveň: <span class="val">' + b.level + ' / ' + EG.MAX_LEVEL + '</span>';
     if (b.kind === 'sub') rows += ' · dosah <span class="val">+' + (b.rangeLevel || 0) * 2 + '</span>';
@@ -463,6 +487,14 @@
     }
     const cBtn = $('#bp-btn-contract');
     if (cBtn) cBtn.classList.toggle('on', !!b.contract);
+    const fuelBtn = $('#bp-btn-fuel');
+    if (fuelBtn && EG.FUEL[b.kind]) {
+      const c = sim.fuelCost(b);
+      $('#bp-fuel-cost').textContent = c === 0 ? 'plný sklad' : '−' + c;
+      fuelBtn.disabled = c === 0 || sim.money < EG.FUEL[b.kind].price;
+    }
+    const fcBtn = $('#bp-btn-fuelcontract');
+    if (fcBtn) fcBtn.classList.toggle('on', !!b.fuelContract);
 
     // schéma rozvodny: přípojnice a toky výkonu
     const schema = $('#bp-schema');
@@ -510,6 +542,8 @@
       if (b.kind !== 'sub') s += ' (' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + ')';
       s += ' ' + b.out.toFixed(0) + '/' + b.gen.toFixed(0) + ' MW';
       s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round(b.cond * 100) + ' %';
+      const fd = EG.FUEL[b.kind];
+      if (fd) s += b.fuel > 0 ? ' · ' + fd.name + ' ' + Math.round(b.fuel / fd.cap * 100) + ' %' : ' · BEZ PALIVA';
     }
     const ind = (map.industries || []).find((o) => Math.abs(o.x - gx) <= 1 && Math.abs(o.y - gy) <= 1);
     if (ind) {
