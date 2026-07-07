@@ -122,6 +122,8 @@ a spravovat v panelu:
   neporouchá** (technici průběžně udržují a postupně spraví i stávající
   poškození), ale stojí **20 % ceny zařízení ročně** – za 5 let tedy
   zaplatíš jako za nové. U rozvodny se paušál počítá včetně traf.
+  **Modernizace paušál snižuje o 15 % za úroveň** (úroveň 2 → 17 %,
+  úroveň 3 → 14 % ceny ročně).
 - **Palivo** (klasické elektrárny) – uhelná má sklad uhlí (240 t, při stavbě
   z poloviny plný) a spotřebovává ho podle skutečně vyrobených MWh. **Bez
   uhlí stojí!** Palivo se kupuje v panelu, nebo **smlouvou na dodávky**

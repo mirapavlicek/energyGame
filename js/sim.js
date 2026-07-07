@@ -458,10 +458,15 @@
     return v;
   };
 
-  /* roční paušál servisní smlouvy: 20 % ceny zařízení
-     (za 5 let se tak zaplatí jako výměna za nové) */
+  /* roční sazba servisní smlouvy: základ 20 % ceny zařízení (za 5 let
+     jako výměna za nové), modernizace ji snižuje o 15 % za úroveň
+     (modernější zařízení potřebuje méně údržby) */
+  Sim.prototype.contractRate = function (b) {
+    return 0.2 * (1 - 0.15 * ((b.level || 1) - 1));
+  };
+
   Sim.prototype.contractYearCost = function (b) {
-    return Math.round(this.equipValue(b) * 0.2);
+    return Math.round(this.equipValue(b) * this.contractRate(b));
   };
 
   Sim.prototype.setContract = function (b, on) {
@@ -1159,8 +1164,8 @@
     for (const b of this.buildings) {
       upkeep += BUILD[b.kind].upkeep * (1 + 0.25 * (b.level - 1));
       for (const [key, count] of Object.entries(b.trafos || {})) upkeep += TRAFOS[key].cost * 0.004 * count;
-      // paušál servisní smlouvy: 20 % hodnoty zařízení ročně (upkeep se násobí 0,01)
-      if (b.contract) upkeep += this.equipValue(b) * 20 / yearLenS;
+      // paušál servisní smlouvy (upkeep se násobí 0,01); modernizace ho zlevňuje
+      if (b.contract) upkeep += this.equipValue(b) * this.contractRate(b) * 100 / yearLenS;
     }
     for (const l of this.lines) upkeep += l.len * LINE_TYPES[l.level].cost * 0.01 * (l.n || 1);
     // --- přeshraniční obchod: import take-or-pay, export za dodané, sankce za nedodané ---

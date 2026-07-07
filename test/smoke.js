@@ -316,11 +316,29 @@ const server = http.createServer((req, res) => {
     };
     const no = run(false);
     const yes = run(true);
+    // sleva za modernizaci: úroveň 2 -> 17 %, úroveň 3 -> 14 %
+    const map3 = EG.generateMap(160, 42);
+    const sim3 = new EG.Sim(map3);
+    sim3.money = 10000;
+    let cx3 = -1, cy3 = -1;
+    outer3:
+    for (let y = 0; y < map3.size; y++) for (let x = 0; x < map3.size; x++) {
+      if (sim3.canPlace('coal', x, y).ok) { cx3 = x; cy3 = y; break outer3; }
+    }
+    const b3 = sim3.place('coal', cx3, cy3);
+    const feeL1 = sim3.contractYearCost(b3);
+    sim3.upgrade(b3);
+    const feeL2 = sim3.contractYearCost(b3);
+    sim3.upgrade(b3);
+    const feeL3 = sim3.contractYearCost(b3);
     // očekávaný paušál za 1 % roku: 0,01 × 20 % × 380 = 0,76
     return {
       feeMeasured: +(yes.drain - no.drain).toFixed(3),
       feeExpected: +(0.01 * 0.2 * EG.BUILD.coal.cost).toFixed(3),
       condNo: +no.cond.toFixed(4), condYes: +yes.cond.toFixed(4),
+      feeL1, feeL2, feeL3,
+      feeL2Expected: Math.round(EG.BUILD.coal.cost * 0.17),
+      feeL3Expected: Math.round(EG.BUILD.coal.cost * 0.14),
     };
   });
   console.log('paušál smlouvy:', JSON.stringify(pausal));
@@ -328,6 +346,10 @@ const server = http.createServer((req, res) => {
     throw new Error('paušál není 20 % ceny/rok: ' + pausal.feeMeasured + ' vs ' + pausal.feeExpected);
   if (!(pausal.condYes >= 1 - 1e-6)) throw new Error('pod smlouvou se zařízení opotřebovává: ' + pausal.condYes);
   if (!(pausal.condNo < 1)) throw new Error('bez smlouvy se zařízení neopotřebovává (test je bezzubý)');
+  if (pausal.feeL2 !== pausal.feeL2Expected || pausal.feeL3 !== pausal.feeL3Expected)
+    throw new Error('modernizace nesnižuje paušál: ' + pausal.feeL1 + '/' + pausal.feeL2 + '/' + pausal.feeL3);
+  if (!(pausal.feeL3 < pausal.feeL2 && pausal.feeL2 < pausal.feeL1))
+    throw new Error('paušál neklesá s úrovní: ' + pausal.feeL1 + '/' + pausal.feeL2 + '/' + pausal.feeL3);
   if (mgmt.levelsEmpty !== '0.4') throw new Error('prázdná rozvodna má mít jen NN, má: ' + mgmt.levelsEmpty);
   if (!mgmt.noCommonNull) throw new Error('spojení bez společné úrovně prošlo');
   if (!mgmt.supports110) throw new Error('trafo 110/22 nepřidalo 110kV přípojnici');
