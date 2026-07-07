@@ -56,7 +56,12 @@ varování. Města se napájí z NN strany rozvodny.
 
 Typický řetěz: vodní elektrárna (110 kV) → vedení 110 kV → rozvodna
 s trafem 110/22 kV + 22/0,4 kV → město.
-- Napájená města rostou a platí za energii; při výpadcích se lidé stěhují pryč.
+- **Každé město má vlastní potřebu**: charakter (obytné / smíšené / průmyslové)
+  určuje spotřebu na obyvatele i denní profil odběru – obytná města mají ranní
+  a večerní špičku, průmyslová jedou přes den naplno a v noci v útlumu.
+- Napájená a spokojená města **pomalu rostou** – přibývají obyvatelé i domy
+  na mapě (čím větší město, tím pomalejší růst); při výpadcích se lidé stěhují
+  pryč a zástavba se zmenšuje. Za dodanou energii města platí.
 - Den/noc cyklus ovlivňuje poptávku i výrobu (slunce, vítr).
 
 ### Správa budov
