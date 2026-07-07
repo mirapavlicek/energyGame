@@ -999,6 +999,14 @@ const server = http.createServer((req, res) => {
     };
   });
   console.log('panel v živé hře:', JSON.stringify(panelState));
+  // grafická odezva: hvězda modernizace a spol.
+  const gfx = await page.evaluate(() => ({
+    star: EG.atlas.S.STAR !== undefined,
+    pip: EG.atlas.S.PIP !== undefined,
+  }));
+  if (!gfx.star || !gfx.pip) throw new Error('chybí sprity pro grafickou odezvu (STAR/PIP)');
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: '/tmp/eg_upgrade.png' });
   if (!panelState.visible) throw new Error('panel správy se po kliknutí neotevřel');
   if (!panelState.title.includes('Uhelná')) throw new Error('panel ukazuje špatnou budovu: ' + panelState.title);
   if (panelState.condAfterSvc !== 1) throw new Error('servis přes UI nefunguje');
