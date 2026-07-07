@@ -394,11 +394,12 @@
       () => sim.service(b));
     svc.id = 'bp-btn-svc';
 
-    const contract = bpButton('📋 Servisní smlouva <span class="cost">+20 % k ceně servisu</span>',
+    const contract = bpButton('📋 Servisní smlouva <span class="cost" id="bp-contract-cost"></span>',
       b.contract ? 'on' : '',
       () => sim.setContract(b, !b.contract));
     contract.id = 'bp-btn-contract';
-    contract.title = 'Technici vyjedou automaticky, když stav klesne pod 50 % nebo při poruše.';
+    contract.title = 'Paušální údržba: zařízení se neopotřebovává ani neporouchá (spraví i stávající ' +
+      'poškození). Stojí 20 % ceny zařízení ročně – za 5 let jako výměna za nové. U rozvodny včetně traf.';
 
     if (EG.FUEL[b.kind]) {
       const fd = EG.FUEL[b.kind];
@@ -535,7 +536,7 @@
     rows += 'Úroveň: <span class="val">' + b.level + ' / ' + EG.MAX_LEVEL + '</span>';
     if (b.kind === 'sub') rows += ' · dosah <span class="val">+' + (b.rangeLevel || 0) * 2 + '</span>';
     rows += '<br>Provoz: <span class="val">' + (def.upkeep * (1 + 0.25 * (b.level - 1))).toFixed(1) + '/s</span>';
-    if (b.contract) rows += ' · <span class="val">smlouva ✓</span>';
+    if (b.contract) rows += ' · <span class="val">smlouva ✓ −' + sim.contractYearCost(b) + '/rok</span>';
     if (b.broken) rows += '<br><span class="bad">⚠ PORUCHA – mimo provoz, nutný servis!</span>';
     $('#bp-stats').innerHTML = rows;
 
@@ -565,7 +566,11 @@
       rngBtn.disabled = c === null || sim.money < c;
     }
     const cBtn = $('#bp-btn-contract');
-    if (cBtn) cBtn.classList.toggle('on', !!b.contract);
+    if (cBtn) {
+      cBtn.classList.toggle('on', !!b.contract);
+      const cc = $('#bp-contract-cost');
+      if (cc) cc.textContent = '−' + sim.contractYearCost(b) + '/rok (20 %)';
+    }
     const fuelBtn = $('#bp-btn-fuel');
     if (fuelBtn && EG.FUEL[b.kind]) {
       const c = sim.fuelCost(b);

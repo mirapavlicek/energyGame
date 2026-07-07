@@ -217,12 +217,17 @@ const server = http.createServer((req, res) => {
     for (let i = 0; i < 30; i++) sim.tick(0.1);
     const poweredBroken = map.cities[0].powered;
 
-    // servisní smlouva se o rozvodnu postará automaticky
+    // servisní smlouva rozvodnu postupně opraví (paušální údržba)
     sim.setContract(sub, true);
-    sim.tick(0.1);
+    for (let i = 0; i < 100; i++) sim.tick(0.1);
     const contractFixed = !sub.broken && sub.cond > 0.9;
     for (let i = 0; i < 30; i++) sim.tick(0.1);
     const poweredAgain = map.cities[0].powered;
+    // se smlouvou se zařízení dál neopotřebovává
+    const condHeld = sub.cond;
+    for (let i = 0; i < 200; i++) sim.tick(0.1);
+    const noWearUnderContract = sub.cond >= condHeld - 1e-9;
+    sim.setContract(sub, false);
 
     // opotřebení běží v ticku samo
     const condBefore = hydro.cond;
@@ -257,6 +262,7 @@ const server = http.createServer((req, res) => {
       rngOk, rangeBefore: r0, rangeAfter: r1,
       poweredOk, poweredBroken: +poweredBroken.toFixed(2),
       contractFixed, poweredAgain: +poweredAgain.toFixed(2),
+      noWearUnderContract,
       wearWorks,
       levelsEmpty, noCommonNull: noCommon === null, supports110,
       wrongLevelNull: wrongLevel === null, tooFarNull: tooFar === null,
@@ -271,7 +277,40 @@ const server = http.createServer((req, res) => {
   if (!mgmt.rngOk || mgmt.rangeAfter !== mgmt.rangeBefore + 2) throw new Error('rozšíření dosahu nefunguje');
   if (!(mgmt.poweredBroken < 0.1)) throw new Error('porouchaná rozvodna stále napájí město');
   if (!mgmt.contractFixed || !(mgmt.poweredAgain > 0.9)) throw new Error('servisní smlouva nefunguje');
+  if (!mgmt.noWearUnderContract) throw new Error('zařízení se opotřebovává i pod smlouvou');
   if (!mgmt.wearWorks) throw new Error('opotřebení v ticku neběží');
+
+  // --- paušál smlouvy: 20 % ceny zařízení ročně ---
+  const pausal = await page.evaluate(() => {
+    const run = (withContract) => {
+      const map = EG.generateMap(160, 42);
+      const sim = new EG.Sim(map);
+      sim.money = 10000;
+      let cx = -1, cy = -1;
+      outer:
+      for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+        if (sim.canPlace('coal', x, y).ok) { cx = x; cy = y; break outer; }
+      }
+      const b = sim.place('coal', cx, cy);
+      if (withContract) sim.setContract(b, true);
+      const m0 = sim.money;
+      for (let i = 0; i < 144; i++) sim.tick(0.1); // 14,4 s = 1 % roku (rok = 1440 s)
+      return { drain: m0 - sim.money, cond: b.cond, broken: b.broken };
+    };
+    const no = run(false);
+    const yes = run(true);
+    // očekávaný paušál za 1 % roku: 0,01 × 20 % × 380 = 0,76
+    return {
+      feeMeasured: +(yes.drain - no.drain).toFixed(3),
+      feeExpected: +(0.01 * 0.2 * EG.BUILD.coal.cost).toFixed(3),
+      condNo: +no.cond.toFixed(4), condYes: +yes.cond.toFixed(4),
+    };
+  });
+  console.log('paušál smlouvy:', JSON.stringify(pausal));
+  if (Math.abs(pausal.feeMeasured - pausal.feeExpected) > 0.1)
+    throw new Error('paušál není 20 % ceny/rok: ' + pausal.feeMeasured + ' vs ' + pausal.feeExpected);
+  if (!(pausal.condYes >= 1 - 1e-6)) throw new Error('pod smlouvou se zařízení opotřebovává: ' + pausal.condYes);
+  if (!(pausal.condNo < 1)) throw new Error('bez smlouvy se zařízení neopotřebovává (test je bezzubý)');
   if (mgmt.levelsEmpty !== '0.4') throw new Error('prázdná rozvodna má mít jen NN, má: ' + mgmt.levelsEmpty);
   if (!mgmt.noCommonNull) throw new Error('spojení bez společné úrovně prošlo');
   if (!mgmt.supports110) throw new Error('trafo 110/22 nepřidalo 110kV přípojnici');
