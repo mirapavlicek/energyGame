@@ -525,6 +525,129 @@ const server = http.createServer((req, res) => {
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
+  // --- zásobníky energie: nabíjení z přebytků, vybíjení při deficitu, účinnost ---
+  const storage = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    // uhelná (stabilní 90 MW) + město + baterie na 22 kV
+    const c = map.cities[0];
+    let sub = null;
+    for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+    let coal = null, batt = null;
+    for (let r = 1; r <= 8 && !(coal && batt); r++)
+      for (let dy = -r; dy <= r && !(coal && batt); dy++) for (let dx = -r; dx <= r; dx++) {
+        if (!coal && sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); continue; }
+        if (!batt && sim.canPlace('battery', sub.x + dx, sub.y + dy).ok) { batt = sim.place('battery', sub.x + dx, sub.y + dy); }
+      }
+    sim.connect(coal, sub, 220);
+    sim.connect(batt, sub, 22);
+
+    // přebytek (uhelná 90 MW >> město) -> baterie se nabíjí
+    for (let i = 0; i < 5; i++) sim.tick(0.1);
+    const chargedSome = batt.charge > 5;
+    const modeCharging = batt.storMode;
+    const coalCoversCharge = coal.out;
+    for (let i = 0; i < 35; i++) sim.tick(0.1);
+    // spotřebovaná energie vs. uložená (účinnost < 1)
+    for (let i = 0; i < 200 && batt.charge < EG.STORAGE.battery.cap - 0.5; i++) sim.tick(0.1);
+    const fullCharge = batt.charge;
+
+    // deficit: uhelné dojde palivo -> baterie vybíjí a drží město
+    coal.fuel = 0;
+    sim.tick(0.1);
+    const modeDischarging = batt.storMode;
+    const cityHeld = map.cities[0].powered;
+    const chargeBefore = batt.charge;
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+    const chargeDrained = batt.charge < chargeBefore - 1;
+
+    // pravidla umístění přečerpávačky: jen kopec u vody
+    let pshSpot = null, grassHill = null;
+    for (let y = 0; y < map.size && !(pshSpot && grassHill); y++) for (let x = 0; x < map.size; x++) {
+      if (!pshSpot && sim.canPlace('psh', x, y).ok) pshSpot = [x, y];
+      if (!grassHill && map.type[map.idx(x, y)] === EG.T.GRASS && !sim.canPlace('psh', x, y).ok) grassHill = [x, y];
+      if (pshSpot && grassHill) break;
+    }
+    const psh = pshSpot ? sim.place('psh', pshSpot[0], pshSpot[1]) : null;
+    return {
+      chargedSome, modeCharging, fullCharge: +fullCharge.toFixed(1),
+      coalCoversCharge: +coalCoversCharge.toFixed(1),
+      modeDischarging, cityHeld: +cityHeld.toFixed(2), chargeDrained,
+      pshPlaced: !!psh, pshOnGrassRejected: !!grassHill,
+      pshLevel: psh ? EG.GEN_LEVEL.psh : null,
+    };
+  });
+  console.log('zásobníky:', JSON.stringify(storage));
+  if (!storage.chargedSome || storage.modeCharging !== 'nabíjí') throw new Error('baterie se nenabíjí z přebytků');
+  if (!(storage.fullCharge > 60)) throw new Error('baterie se nedobila: ' + storage.fullCharge);
+  if (storage.modeDischarging !== 'vybíjí') throw new Error('baterie při deficitu nevybíjí: ' + storage.modeDischarging);
+  if (!(storage.cityHeld > 0.4)) throw new Error('baterie nedrží město při výpadku: ' + storage.cityHeld);
+  if (!storage.chargeDrained) throw new Error('vybíjení neubírá zásobu');
+  if (!storage.pshPlaced) throw new Error('přečerpávačku nejde postavit na kopci u vody');
+  if (!storage.pshOnGrassRejected) throw new Error('přečerpávačka jde postavit na trávě');
+
+  // --- regulační trafa: přepínač odboček mění rozdělení toků ---
+  const regulace = await page.evaluate(() => {
+    const build = () => {
+      const map = EG.generateMap(160, 42);
+      const sim = new EG.Sim(map);
+      sim.money = 1000000;
+      const c = map.cities[0];
+      let sub = null;
+      for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+        if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+      }
+      // dvě paralelní cesty 400 -> 110: přímé trafo vs. 400/220 + 220/110
+      for (const k of ['t400_110', 't400_220', 't220_110', 't110_22', 't22_04']) sim.buyTrafo(sub, k);
+      let dam = null;
+      outer:
+      for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+        if (map.type[map.idx(x, y)] === EG.T.RIVER && sim.canPlace('dam', x, y).ok &&
+            Math.hypot(x - sub.x, y - sub.y) <= 48) { dam = sim.place('dam', x, y); break outer; }
+      }
+      if (!dam) return null;
+      sim.connect(dam, sub, 400);
+      return { sim, sub };
+    };
+    const a = build();
+    if (!a) return { fail: 'přehrada se nepostavila' };
+    for (let i = 0; i < 30; i++) a.sim.tick(0.1);
+    const directBefore = Math.abs(a.sub.trafoFlow.t400_110 || 0);
+
+    const regBought = a.sim.buyTrafoReg(a.sub, 't400_110');
+    const regSet = a.sim.setTrafoReg(a.sub, 't400_110', 'limit');
+    for (let i = 0; i < 30; i++) a.sim.tick(0.1);
+    const directLimited = Math.abs(a.sub.trafoFlow.t400_110 || 0);
+    const viaParallel = Math.abs(a.sub.trafoFlow.t400_220 || 0);
+
+    a.sim.setTrafoReg(a.sub, 't400_110', 'boost');
+    for (let i = 0; i < 30; i++) a.sim.tick(0.1);
+    const directBoosted = Math.abs(a.sub.trafoFlow.t400_110 || 0);
+
+    // regulaci nejde nastavit bez nákupu
+    const noRegSet = a.sim.setTrafoReg(a.sub, 't400_220', 'boost');
+
+    return {
+      directBefore: +directBefore.toFixed(1),
+      regBought, regSet,
+      directLimited: +directLimited.toFixed(1),
+      viaParallel: +viaParallel.toFixed(1),
+      directBoosted: +directBoosted.toFixed(1),
+      noRegSet,
+    };
+  });
+  console.log('regulační trafa:', JSON.stringify(regulace));
+  if (regulace.fail) throw new Error(regulace.fail);
+  if (!regulace.regBought || !regulace.regSet) throw new Error('nákup/nastavení regulace nefunguje');
+  if (!(regulace.directLimited < regulace.directBefore * 0.7)) throw new Error('škrcení tok trafem nesnížilo: ' + regulace.directBefore + ' -> ' + regulace.directLimited);
+  if (!(regulace.viaParallel > 0.5)) throw new Error('škrcení nepřesměrovalo tok na paralelní cestu');
+  if (!(regulace.directBoosted > regulace.directLimited * 1.5)) throw new Error('přednostní tok trafem nezvýšil: ' + regulace.directLimited + ' -> ' + regulace.directBoosted);
+  if (regulace.noRegSet) throw new Error('regulaci lze nastavit bez nákupu přepínače');
+
   // --- palivo klasických elektráren: spotřeba, zastavení bez uhlí, nákup, smlouva ---
   const fuel = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);

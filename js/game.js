@@ -31,7 +31,10 @@
   const $ = (s) => document.querySelector(s);
 
   function kindSprite(kind) {
-    return { hydro: S.HYDRO, dam: S.DAM, coal: S.COAL, solar: S.SOLAR, wind: S.WIND, sub: S.SUBST }[kind];
+    return {
+      hydro: S.HYDRO, dam: S.DAM, coal: S.COAL, solar: S.SOLAR, wind: S.WIND,
+      sub: S.SUBST, psh: S.PSH, battery: S.BATT,
+    }[kind];
   }
 
   function init() {
@@ -300,6 +303,7 @@
           dir: flow >= 0 ? 'down' : 'up',
           mw: Math.abs(flow), load: (b.trafoLoad || {})[key] || 0,
           label: t.name + (count > 1 ? ' ×' + count : ''), lo: t.lo,
+          reg: (b.trafoReg || {})[key] || null,
         });
       }
     }
@@ -316,8 +320,9 @@
       } else if (r.type === 'trafo') {
         const arrow = r.dir === 'down' ? '⇩' : '⇧';
         const cls = r.load > 1 ? 'bad' : r.load > 0.75 ? 'warn' : '';
+        const regTag = r.reg ? ' <span class="dim">[reg: ' + { auto: 'auto', boost: '▲', limit: '▼' }[r.reg] + ']</span>' : '';
         html += '<div class="bp-sch-trafo ' + cls + '">' + arrow + ' trafo ' + r.label +
-          ' · ' + r.mw.toFixed(1) + ' MW · ' + Math.round(r.load * 100) + ' %</div>';
+          ' · ' + r.mw.toFixed(1) + ' MW · ' + Math.round(r.load * 100) + ' %' + regTag + '</div>';
       } else {
         const arrow = r.dir === 'in' ? '←' : r.dir === 'out' ? '→' : '·';
         const verb = r.type === 'load' ? '' : (r.dir === 'in' ? ' z ' : r.dir === 'out' ? ' do ' : ' ');
@@ -400,13 +405,20 @@
       rng.id = 'bp-btn-rng';
       rng.title = 'Zvětší dosah rozvodny k městům o 2 dlaždice.';
 
-      // --- trafa: instalovaná + nákup ---
+      // --- trafa: instalovaná + nákup + regulace (přepínač odboček) ---
       const sec = document.createElement('div');
       sec.className = 'bp-sec';
       sec.textContent = 'Trafa';
       box.appendChild(sec);
       const list = document.createElement('div');
       list.id = 'bp-trafo-list';
+      // delegovaně (řádky se každý snímek přestavují): nákup regulace a přepínání režimu
+      list.addEventListener('mousedown', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        if (btn.dataset.regbuy) sim.buyTrafoReg(b, btn.dataset.regbuy);
+        else if (btn.dataset.mode) sim.setTrafoReg(b, btn.dataset.key, btn.dataset.mode);
+      });
       box.appendChild(list);
       for (const [key, t] of Object.entries(EG.TRAFOS)) {
         const el = bpButton('➕ ' + t.name + '<span class="cost">' + t.cap + ' MW · −' + t.cost + '</span>', 'trafo-buy',
@@ -439,6 +451,15 @@
       rows += 'Odběr přes rozvodnu: <span class="val">' +
         (sim.cityAssign || []).filter((ca) => ca.sub >= 0 && sim.buildings[ca.sub] === b)
           .reduce((s, ca) => s + ca.served, 0).toFixed(0) + ' MW</span><br>';
+    } else if (EG.STORAGE[b.kind]) {
+      const sd = EG.STORAGE[b.kind];
+      const pct = Math.round(b.charge / sd.cap * 100);
+      rows += 'Zásoba: <span class="val">' + Math.round(b.charge) + ' / ' + sd.cap + ' MWs (' + pct + ' %)</span><br>';
+      rows += 'Režim: <span class="val">' + b.storMode +
+        (Math.abs(b.out) > 0.05 ? ' (' + Math.abs(b.out).toFixed(1) + ' MW)' : '') + '</span><br>';
+      rows += 'Max. výkon: <span class="val">±' + Math.round(sd.maxP * (1 + 0.25 * (b.level - 1))) +
+        ' MW</span> · účinnost <span class="val">' + Math.round(sd.eff * 100) + ' %</span><br>';
+      rows += 'Připojení: <span class="val">' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + '</span><br>';
     } else {
       rows += 'Výkon: <span class="val">' + b.out.toFixed(1) + ' / ' + b.gen.toFixed(1) + ' MW</span><br>';
       rows += 'Výstupní napětí: <span class="val">' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + '</span><br>';
@@ -517,9 +538,22 @@
             const load = (b.trafoLoad || {})[key] || 0;
             const pct = Math.round(load * 100);
             const cls = load > 1 ? 'bad' : load > 0.75 ? 'warn' : '';
+            const reg = (b.trafoReg || {})[key];
+            let regHtml;
+            if (!reg) {
+              const rc = sim.trafoRegCost(key);
+              regHtml = '<button class="reg-btn" data-regbuy="' + key + '" title="Regulační trafo (přepínač odboček): umožní tok posílit či škrtit."' +
+                (sim.money < rc ? ' disabled' : '') + '>🎛 −' + rc + '</button>';
+            } else {
+              regHtml = ['auto', 'boost', 'limit'].map((m) =>
+                '<button class="reg-btn' + (reg === m ? ' on' : '') + '" data-key="' + key + '" data-mode="' + m +
+                '" title="' + { auto: 'automatika', boost: 'přednostní tok (posílit)', limit: 'škrcení toku (omezit)' }[m] + '">' +
+                { auto: 'A', boost: '▲', limit: '▼' }[m] + '</button>').join('');
+            }
             return '<div class="bp-trafo-item">' + t.name + ' ×' + count +
               ' <span class="' + cls + '">' + pct + ' %</span>' +
-              ' <span class="dim">z ' + t.cap * count + ' MW</span></div>';
+              ' <span class="dim">z ' + t.cap * count + ' MW</span>' +
+              '<span class="reg-box">' + regHtml + '</span></div>';
           }).join('');
       }
       document.querySelectorAll('.trafo-buy').forEach((el) => {
@@ -544,6 +578,8 @@
       s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round(b.cond * 100) + ' %';
       const fd = EG.FUEL[b.kind];
       if (fd) s += b.fuel > 0 ? ' · ' + fd.name + ' ' + Math.round(b.fuel / fd.cap * 100) + ' %' : ' · BEZ PALIVA';
+      const sd = EG.STORAGE[b.kind];
+      if (sd) s += ' · zásoba ' + Math.round(b.charge / sd.cap * 100) + ' % · ' + b.storMode;
     }
     const ind = (map.industries || []).find((o) => Math.abs(o.x - gx) <= 1 && Math.abs(o.y - gy) <= 1);
     if (ind) {

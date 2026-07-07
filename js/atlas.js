@@ -12,7 +12,7 @@
   const S = {
     WATER: 0, SAND: 1, GRASS: 2, FOREST: 3, HILL: 4, MOUNTAIN: 5, RIVER: 6, RESERVOIR: 7,
     HOUSE: 8, HOUSE2: 9, CENTER: 10, HYDRO: 11, DAM: 12, COAL: 13, SOLAR: 14, WIND: 15,
-    SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20,
+    SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -249,6 +249,39 @@
       c.beginPath(); c.arc(AX - 6, AY - 49, 5.5, 0, Math.PI * 2); c.fill();
       // vrata
       c.fillStyle = '#3f3a33'; c.fillRect(AX + 6, AY - 8, 6, 7);
+    });
+
+    at(S.PSH, (c) => {
+      raised(c, 8, '#8fae64', '#6d8c4b', '#5a7540');
+      // horní nádrž
+      c.fillStyle = '#3f86c0';
+      c.beginPath(); c.ellipse(AX, AY - 22, 12, 5, 0, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#63a5d6'; c.lineWidth = 1.5; c.stroke();
+      // tlakové potrubí dolů
+      c.strokeStyle = '#9aa2ab'; c.lineWidth = 4;
+      c.beginPath(); c.moveTo(AX + 4, AY - 20); c.lineTo(AX + 14, AY - 2); c.stroke();
+      c.strokeStyle = '#c3cad1'; c.lineWidth = 1.5;
+      c.beginPath(); c.moveTo(AX + 3, AY - 20); c.lineTo(AX + 13, AY - 2); c.stroke();
+      // strojovna dole
+      box(c, 9, 5, 8, '#7899ad', '#dfe9ee', '#a9c0cd', 4);
+      // šipky nahoru/dolů (čerpá/turbínuje)
+      c.fillStyle = '#e8c84a';
+      c.beginPath(); c.moveTo(AX - 8, AY - 34); c.lineTo(AX - 4, AY - 28); c.lineTo(AX - 12, AY - 28); c.closePath(); c.fill();
+      c.beginPath(); c.moveTo(AX - 8, AY - 20); c.lineTo(AX - 4, AY - 26); c.lineTo(AX - 12, AY - 26); c.closePath(); c.fill();
+    });
+    at(S.BATT, (c) => {
+      tile(c, '#9aa77f', '#aeb992', '#7d8a66');
+      // kontejnery baterií
+      box(c, 11, 5, 10, '#3a7d54', '#8fd0a8', '#5da97c');
+      box(c, 5, 3, 14, '#33684a', '#7fc096', '#529a6e', -6);
+      c.fillStyle = '#1f4530';
+      for (let q = 0; q < 3; q++) c.fillRect(AX - 8 + q * 6, AY - 12, 3, 6);
+      // blesk
+      c.fillStyle = '#ffe14d';
+      c.beginPath();
+      c.moveTo(AX + 1, AY - 30); c.lineTo(AX - 4, AY - 21); c.lineTo(AX - 1, AY - 21);
+      c.lineTo(AX - 3, AY - 13); c.lineTo(AX + 4, AY - 23); c.lineTo(AX + 1, AY - 23);
+      c.closePath(); c.fill();
     });
 
     at(S.SEL, (c) => {
