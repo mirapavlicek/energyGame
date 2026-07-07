@@ -254,6 +254,85 @@
     $('#btn-speed').textContent = speed === 0 ? '⏸ pauza' : '▶ ' + speed + '×';
   }
 
+  /* ---------- schéma rozvodny: přípojnice, trafa a toky výkonu ---------- */
+  /* Vrací řádky jednopólového schématu: kudy výkon do rozvodny přitéká,
+     kam odtéká vedeními, trafy mezi hladinami a odběry měst/průmyslu. */
+  function schemaData(sim, b) {
+    const bi = sim.buildings.indexOf(b);
+    const rows = [];
+    const eps = 0.05;
+    for (const lv of sim.levelsOf(b)) {
+      rows.push({ type: 'bus', lv, label: EG.LINE_TYPES[lv].name });
+      // vedení na této hladině
+      for (const l of sim.lines) {
+        if (l.level !== lv || (l.a !== b.id && l.b !== b.id)) continue;
+        const other = sim.buildings.find((o) => o.id === (l.a === b.id ? l.b : l.a));
+        if (!other) continue;
+        const inflow = l.b === b.id ? l.flow : -l.flow; // kladné = teče SEM
+        const name = EG.BUILD[other.kind].name + ' [' + other.x + ',' + other.y + ']';
+        rows.push({
+          type: 'line',
+          dir: inflow > eps ? 'in' : inflow < -eps ? 'out' : 'idle',
+          mw: Math.abs(inflow), label: name, load: l.load,
+        });
+      }
+      // odběry: města na NN, průmysl na VN
+      if (lv === 0.4) {
+        for (const ca of (sim.cityAssign || [])) {
+          if (ca.sub >= 0 && sim.buildings[ca.sub] === b) {
+            rows.push({ type: 'load', dir: 'out', mw: ca.served, label: 'město ' + ca.city.name });
+          }
+        }
+      }
+      for (const ia of (sim.indAssign || [])) {
+        if (ia.level === lv && ia.sub >= 0 && sim.buildings[ia.sub] === b) {
+          rows.push({ type: 'load', dir: 'out', mw: ia.served, label: ia.ind.name });
+        }
+      }
+      // trafa z této hladiny dolů
+      for (const [key, count] of Object.entries(b.trafos || {})) {
+        if (!count) continue;
+        const t = EG.TRAFOS[key];
+        if (t.hi !== lv) continue;
+        const flow = (b.trafoFlow || {})[key] || 0; // kladné = hi -> lo
+        rows.push({
+          type: 'trafo', key,
+          dir: flow >= 0 ? 'down' : 'up',
+          mw: Math.abs(flow), load: (b.trafoLoad || {})[key] || 0,
+          label: t.name + (count > 1 ? ' ×' + count : ''), lo: t.lo,
+        });
+      }
+    }
+    return rows;
+  }
+  EG.schemaData = schemaData;
+
+  function renderSchema(b) {
+    const rows = schemaData(sim, b);
+    let html = '';
+    for (const r of rows) {
+      if (r.type === 'bus') {
+        html += '<div class="bp-bus">' + r.label + '</div>';
+      } else if (r.type === 'trafo') {
+        const arrow = r.dir === 'down' ? '⇩' : '⇧';
+        const cls = r.load > 1 ? 'bad' : r.load > 0.75 ? 'warn' : '';
+        html += '<div class="bp-sch-trafo ' + cls + '">' + arrow + ' trafo ' + r.label +
+          ' · ' + r.mw.toFixed(1) + ' MW · ' + Math.round(r.load * 100) + ' %</div>';
+      } else {
+        const arrow = r.dir === 'in' ? '←' : r.dir === 'out' ? '→' : '·';
+        const verb = r.type === 'load' ? '' : (r.dir === 'in' ? ' z ' : r.dir === 'out' ? ' do ' : ' ');
+        const cls = r.dir === 'in' ? 'in' : r.dir === 'out' ? 'out' : 'idle';
+        const over = r.type === 'line' && r.load > 1 ? ' <span class="bad">PŘETÍŽENO</span>' : '';
+        html += '<div class="bp-sch-feed ' + cls + '">' + arrow + verb + r.label +
+          ' · ' + r.mw.toFixed(1) + ' MW' + over + '</div>';
+      }
+    }
+    if (!rows.some((r) => r.type !== 'bus')) {
+      html += '<div class="bp-trafo-none">Žádné toky – připoj vedení a kup trafa.</div>';
+    }
+    return html;
+  }
+
   /* ---------- panel správy budovy ---------- */
   function selectBuilding(b) {
     selected = b;
@@ -384,6 +463,15 @@
     }
     const cBtn = $('#bp-btn-contract');
     if (cBtn) cBtn.classList.toggle('on', !!b.contract);
+
+    // schéma rozvodny: přípojnice a toky výkonu
+    const schema = $('#bp-schema');
+    if (b.kind === 'sub') {
+      schema.hidden = false;
+      schema.innerHTML = '<div class="bp-sec" style="border-top:none;margin-top:0;padding-top:0">Schéma a toky</div>' + renderSchema(b);
+    } else {
+      schema.hidden = true;
+    }
 
     // trafa: instalované kusy + zatížení, dostupnost nákupu
     if (b.kind === 'sub') {

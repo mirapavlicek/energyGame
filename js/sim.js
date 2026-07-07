@@ -495,9 +495,10 @@
     }
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
-      if (b.kind !== 'sub' || b.broken) continue;
+      if (b.kind !== 'sub') continue;
       b.trafoLoad = {};
       b.trafoFlow = {};
+      if (b.broken) continue;
       for (const [key, count] of Object.entries(b.trafos)) {
         if (!count) continue;
         const t = TRAFOS[key];

@@ -525,6 +525,47 @@ const server = http.createServer((req, res) => {
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
+  // --- schéma rozvodny: přípojnice a toky výkonu (kam výkon jde) ---
+  const schema = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const c = map.cities[0];
+    let sub = null;
+    for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.connect(coal, sub, 220);
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const rows = EG.schemaData(sim, sub);
+    const buses = rows.filter((r) => r.type === 'bus').map((r) => r.lv);
+    const line = rows.find((r) => r.type === 'line');
+    const trafos = rows.filter((r) => r.type === 'trafo');
+    const loads = rows.filter((r) => r.type === 'load');
+    return {
+      buses,
+      lineDir: line && line.dir, lineMw: line ? +line.mw.toFixed(1) : 0,
+      lineFrom: line && line.label,
+      nTrafos: trafos.length,
+      trafosDown: trafos.every((t) => t.dir === 'down'),
+      trafoMws: trafos.map((t) => +t.mw.toFixed(1)),
+      cityLoad: loads.find((l) => l.label.startsWith('město')),
+    };
+  });
+  console.log('schéma rozvodny:', JSON.stringify(schema));
+  if (JSON.stringify(schema.buses) !== JSON.stringify([220, 110, 22, 0.4]))
+    throw new Error('schéma nemá přípojnice 220/110/22/0,4: ' + JSON.stringify(schema.buses));
+  if (schema.lineDir !== 'in' || !(schema.lineMw > 1)) throw new Error('schéma neukazuje přítok z vedení');
+  if (!schema.lineFrom.includes('Uhelná')) throw new Error('schéma neukazuje odkud výkon teče: ' + schema.lineFrom);
+  if (schema.nTrafos !== 3 || !schema.trafosDown) throw new Error('schéma neukazuje toky přes trafa dolů');
+  if (!schema.trafoMws.every((m) => m > 1)) throw new Error('trafa ve schématu nemají tok: ' + JSON.stringify(schema.trafoMws));
+  if (!schema.cityLoad || !(schema.cityLoad.mw > 1)) throw new Error('schéma neukazuje odběr města');
+
   // --- panel správy v živé hře: klik na budovu jako hráč ---
   const panel = await page.evaluate(() => {
     const { sim, map, renderer } = EG.game;
@@ -604,6 +645,14 @@ const server = http.createServer((req, res) => {
   if (subPanel.nBuyBtns !== 8) throw new Error('má být 8 typů traf, je ' + subPanel.nBuyBtns);
   if (subPanel.bought !== 1) throw new Error('nákup trafa přes UI nefunguje');
   if (!subPanel.levels.includes('110')) throw new Error('trafo nepřidalo 110kV přípojnici: ' + subPanel.levels);
+  await page.waitForTimeout(250);
+  const schemaUi = await page.evaluate(() => {
+    const el = document.querySelector('#bp-schema');
+    return { visible: !el.hidden, text: el.textContent };
+  });
+  console.log('schéma v UI:', JSON.stringify({ visible: schemaUi.visible, has110: schemaUi.text.includes('110 kV') }));
+  if (!schemaUi.visible || !schemaUi.text.includes('Schéma')) throw new Error('schéma se v panelu rozvodny nezobrazuje');
+  if (!schemaUi.text.includes('110 kV')) throw new Error('schéma neukazuje 110kV přípojnici po nákupu trafa');
   await page.screenshot({ path: '/tmp/eg_panel.png' });
 
   // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 7 úrovní,
