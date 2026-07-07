@@ -215,7 +215,25 @@
       });
     }
 
-    return { size: N, type, elev, flow, flowDir, cities, industries, seed, T, idx };
+    // --- přeshraniční předávací body: na okrajích mapy, napojení na sousední soustavy ---
+    const crossings = [];
+    const X_NAMES = ['Bavorsko', 'Sasko', 'Rakousko', 'Polsko', 'Slovensko'];
+    const edges = [
+      () => [3 + Math.floor(rand() * (N - 6)), 2],           // sever
+      () => [N - 3, 3 + Math.floor(rand() * (N - 6))],       // východ
+      () => [3 + Math.floor(rand() * (N - 6)), N - 3],       // jih
+      () => [2, 3 + Math.floor(rand() * (N - 6))],           // západ
+    ];
+    let xTries = 0;
+    while (crossings.length < 3 && xTries++ < 4000) {
+      const [x, y] = edges[crossings.length % 4]();
+      const t = type[idx(x, y)];
+      if (t === T.WATER || t === T.RIVER || t === T.MOUNTAIN) continue;
+      if (crossings.some((cr) => Math.abs(cr.x - x) + Math.abs(cr.y - y) < 40)) continue;
+      crossings.push({ x, y, name: X_NAMES[crossings.length % X_NAMES.length] });
+    }
+
+    return { size: N, type, elev, flow, flowDir, cities, industries, crossings, seed, T, idx };
   }
 
   const CITY_NAMES = [

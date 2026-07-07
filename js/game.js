@@ -33,7 +33,7 @@
   function kindSprite(kind) {
     return {
       hydro: S.HYDRO, dam: S.DAM, coal: S.COAL, solar: S.SOLAR, wind: S.WIND,
-      sub: S.SUBST, psh: S.PSH, battery: S.BATT,
+      sub: S.SUBST, psh: S.PSH, battery: S.BATT, xborder: S.XBORDER,
     }[kind];
   }
 
@@ -231,7 +231,7 @@
     const bar = $('#toolbar');
     const tools = [
       { t: 'pan', label: 'Prohlížet', key: 'Q' },
-      ...Object.entries(EG.BUILD).map(([k, v]) => ({
+      ...Object.entries(EG.BUILD).filter(([, v]) => !v.hidden).map(([k, v]) => ({
         t: k, label: v.name, key: v.hotkey.toUpperCase(), cost: v.cost, desc: v.desc,
       })),
       { t: 'demolish', label: 'Zbourat', key: 'X' },
@@ -367,6 +367,28 @@
     box.innerHTML = '';
     if (!b) return;
 
+    // přeshraniční bod: jen sjednávání smluv (nákup/prodej po 10 MW)
+    if (b.kind === 'xborder') {
+      const mk = (dir, ico, label) => {
+        const row = document.createElement('div');
+        row.className = 'bp-xrow';
+        const span = document.createElement('span');
+        span.innerHTML = ico + ' ' + label;
+        row.appendChild(span);
+        for (const d of [-EG.XTRADE.step, EG.XTRADE.step]) {
+          const btn = document.createElement('button');
+          btn.className = 'reg-btn';
+          btn.textContent = (d > 0 ? '+' : '−') + Math.abs(d);
+          btn.addEventListener('click', () => { sim.adjustXContract(b, dir, d); updatePanel(); });
+          row.appendChild(btn);
+        }
+        box.appendChild(row);
+      };
+      mk('import', '⬅', 'Nákup (import)');
+      mk('export', '➡', 'Prodej (export)');
+      return;
+    }
+
     const svc = bpButton('🔧 Servis' + (b.broken ? ' (oprava poruchy)' : '') +
       '<span class="cost" id="bp-svc-cost"></span>', b.broken ? 'danger' : '',
       () => sim.service(b));
@@ -442,6 +464,27 @@
     if (!sim.buildings.includes(b)) { closePanel(); return; }
     const def = EG.BUILD[b.kind];
     $('#bp-title').textContent = def.name + ' [' + b.x + ',' + b.y + ']';
+    $('#bp-cond-row').hidden = b.kind === 'xborder';
+
+    // přeshraniční bod: smlouvy, plnění a sankce
+    if (b.kind === 'xborder') {
+      $('#bp-title').textContent = 'Soused: ' + b.name + ' [' + b.x + ',' + b.y + ']';
+      const connected = sim.lines.some((l) => l.a === b.id || l.b === b.id);
+      const short = Math.max(0, b.xExport - (b.xServed || 0));
+      let xr = 'Připojení: <span class="val">' + (connected ? '400 kV ✓' : '<span class="bad">nepřipojeno!</span>') + '</span><br>';
+      xr += 'Nákup (import): <span class="val">' + b.xImport + ' MW</span> · platíš ' +
+        (b.xImport * EG.XTRADE.importPrice * 60).toFixed(0) + '/min <span class="dim">(take-or-pay)</span><br>';
+      xr += 'Prodej (export): <span class="val">' + b.xExport + ' MW</span> · dodáváš <span class="val">' +
+        (b.xServed || 0).toFixed(1) + ' MW</span> (+' + ((b.xServed || 0) * EG.XTRADE.exportPrice * 60).toFixed(0) + '/min)<br>';
+      if (short > 0.5) {
+        xr += '<span class="bad">⚠ SANKCE: nedodáváš ' + short.toFixed(0) + ' MW → −' +
+          (short * EG.XTRADE.penalty * 60).toFixed(0) + '/min</span><br>';
+      }
+      xr += '<span class="dim">Krok smlouvy ' + EG.XTRADE.step + ' MW, strop ' + EG.XTRADE.max + ' MW na směr.</span>';
+      $('#bp-stats').innerHTML = xr;
+      $('#bp-schema').hidden = true;
+      return;
+    }
 
     let rows = '';
     if (b.kind === 'sub') {
@@ -580,6 +623,8 @@
       if (fd) s += b.fuel > 0 ? ' · ' + fd.name + ' ' + Math.round(b.fuel / fd.cap * 100) + ' %' : ' · BEZ PALIVA';
       const sd = EG.STORAGE[b.kind];
       if (sd) s += ' · zásoba ' + Math.round(b.charge / sd.cap * 100) + ' % · ' + b.storMode;
+      if (b.kind === 'xborder') s += ' · ' + b.name + ' · import ' + b.xImport + ' MW · export ' +
+        (b.xServed || 0).toFixed(0) + '/' + b.xExport + ' MW';
     }
     const ind = (map.industries || []).find((o) => Math.abs(o.x - gx) <= 1 && Math.abs(o.y - gy) <= 1);
     if (ind) {
@@ -650,8 +695,13 @@
       g.fillRect(ind.x - 1.5, ind.y - 1.5, 4, 4);
     }
     for (const b of sim.buildings) {
-      g.fillStyle = b.kind === 'sub' ? '#e8c84a' : '#ffffff';
-      g.fillRect(b.x - 1, b.y - 1, 2.5, 2.5);
+      if (b.kind === 'xborder') {
+        g.fillStyle = '#7ec8ff';
+        g.fillRect(b.x - 2, b.y - 2, 5, 5);
+      } else {
+        g.fillStyle = b.kind === 'sub' ? '#e8c84a' : '#ffffff';
+        g.fillRect(b.x - 1, b.y - 1, 2.5, 2.5);
+      }
     }
     // rámeček kamery
     const z = renderer.cam.zoom;
