@@ -492,7 +492,8 @@
       () => sim.setContract(b, !b.contract));
     contract.id = 'bp-btn-contract';
     contract.title = 'Paušální údržba: zařízení se neopotřebovává ani neporouchá (spraví i stávající ' +
-      'poškození). Stojí 20 % ceny zařízení ročně – za 5 let jako výměna za nové. U rozvodny včetně traf.';
+      'poškození). Stojí 20 % ceny zařízení ročně – za 5 let jako výměna za nové. U rozvodny včetně traf. ' +
+      'Modernizace paušál snižuje o 15 % za úroveň.';
 
     if (EG.FUEL[b.kind]) {
       const fd = EG.FUEL[b.kind];
@@ -662,7 +663,7 @@
     if (cBtn) {
       cBtn.classList.toggle('on', !!b.contract);
       const cc = $('#bp-contract-cost');
-      if (cc) cc.textContent = '−' + sim.contractYearCost(b) + '/rok (20 %)';
+      if (cc) cc.textContent = '−' + sim.contractYearCost(b) + '/rok (' + Math.round(sim.contractRate(b) * 100) + ' %)';
     }
     const fuelBtn = $('#bp-btn-fuel');
     if (fuelBtn && EG.FUEL[b.kind]) {
