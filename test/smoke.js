@@ -136,6 +136,144 @@ const server = http.createServer((req, res) => {
   if (!(result.cityPowered > 0.9)) throw new Error('město není napájené: ' + result.cityPowered);
   if (!result.damPlaced || !(result.damGen > 0)) throw new Error('přehrada nefunguje');
 
+  // --- správa budov: opotřebení, servis, smlouva, modernizace, dosah rozvodny ---
+  const mgmt = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 100000;
+    let rx = -1, ry = -1;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (map.type[map.idx(x, y)] === EG.T.RIVER && sim.canPlace('hydro', x, y).ok) { rx = x; ry = y; break outer; }
+    }
+    const hydro = sim.place('hydro', rx, ry);
+    const c = map.cities[0];
+    let sub = null;
+    for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.tick(0.1);
+
+    // opotřebení snižuje výkon
+    const genFresh = sim._genOf(hydro, 1, 1);
+    hydro.cond = 0.3;
+    const genWorn = sim._genOf(hydro, 1, 1);
+
+    // servis vrátí stav na 100 %
+    const svcCost = sim.serviceCost(hydro);
+    const moneyBefore = sim.money;
+    const svcOk = sim.service(hydro);
+    const svcPaid = moneyBefore - sim.money;
+
+    // porucha vyřadí z provozu, servis opraví
+    hydro.cond = 0.05; hydro.broken = true;
+    const genBroken = sim._genOf(hydro, 1, 1);
+    sim.service(hydro);
+    const fixedAfterService = !hydro.broken && hydro.cond === 1;
+
+    // modernizace zvedne výkon o 25 %
+    const genL1 = sim._genOf(hydro, 1, 1);
+    const upOk = sim.upgrade(hydro);
+    const genL2 = sim._genOf(hydro, 1, 1);
+
+    // rozvodna: rozšíření dosahu
+    const r0 = sim.subRange(sub);
+    const rngOk = sim.upgradeRange(sub);
+    const r1 = sim.subRange(sub);
+
+    // porouchaná rozvodna nenapájí město (uhelná hned vedle rozvodny, ať je vedení krátké)
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.connect(coal, sub);
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const poweredOk = map.cities[0].powered > 0;
+    sub.broken = true;
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const poweredBroken = map.cities[0].powered;
+
+    // servisní smlouva se o rozvodnu postará automaticky
+    sim.setContract(sub, true);
+    sim.tick(0.1);
+    const contractFixed = !sub.broken && sub.cond > 0.9;
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const poweredAgain = map.cities[0].powered;
+
+    // opotřebení běží v ticku samo
+    const condBefore = hydro.cond;
+    for (let i = 0; i < 200; i++) sim.tick(0.1);
+    const wearWorks = hydro.cond < condBefore;
+
+    return {
+      genFresh: +genFresh.toFixed(1), genWorn: +genWorn.toFixed(1),
+      wornIsLess: genWorn < genFresh * 0.7,
+      svcOk, svcPaid, svcCostMatches: svcPaid === svcCost,
+      genBrokenZero: genBroken === 0, fixedAfterService,
+      upOk, genL1: +genL1.toFixed(1), genL2: +genL2.toFixed(1),
+      upgradeBoost: +(genL2 / genL1).toFixed(2),
+      rngOk, rangeBefore: r0, rangeAfter: r1,
+      poweredOk, poweredBroken: +poweredBroken.toFixed(2),
+      contractFixed, poweredAgain: +poweredAgain.toFixed(2),
+      wearWorks,
+    };
+  });
+  console.log('správa budov:', JSON.stringify(mgmt, null, 1));
+  if (!mgmt.wornIsLess) throw new Error('opotřebení nesnižuje výkon');
+  if (!mgmt.svcOk || !mgmt.svcCostMatches) throw new Error('servis nefunguje');
+  if (!mgmt.genBrokenZero || !mgmt.fixedAfterService) throw new Error('porucha/oprava nefunguje');
+  if (!mgmt.upOk || Math.abs(mgmt.upgradeBoost - 1.25) > 0.01) throw new Error('modernizace nefunguje');
+  if (!mgmt.rngOk || mgmt.rangeAfter !== mgmt.rangeBefore + 2) throw new Error('rozšíření dosahu nefunguje');
+  if (!(mgmt.poweredBroken < 0.1)) throw new Error('porouchaná rozvodna stále napájí město');
+  if (!mgmt.contractFixed || !(mgmt.poweredAgain > 0.9)) throw new Error('servisní smlouva nefunguje');
+  if (!mgmt.wearWorks) throw new Error('opotřebení v ticku neběží');
+
+  // --- panel správy v živé hře: klik na budovu jako hráč ---
+  const panel = await page.evaluate(() => {
+    const { sim, map, renderer } = EG.game;
+    sim.money = 50000;
+    let bx = -1, by = -1;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (sim.canPlace('coal', x, y).ok) { bx = x; by = y; break outer; }
+    }
+    const coal = sim.place('coal', bx, by);
+    coal.cond = 0.5; // ať jde servis koupit
+    const [wx, wy] = renderer.tileToWorld(bx, by);
+    renderer.cam.x = wx; renderer.cam.y = wy; renderer.cam.zoom = 1.5;
+    return { bx, by, id: coal.id };
+  });
+  await page.waitForTimeout(300);
+  // kamera je vycentrovaná na budovu → klik doprostřed obrazovky ji vybere
+  const clickPos = await page.evaluate(() => {
+    const cv = EG.game.renderer.canvas;
+    return { x: cv.clientWidth / 2, y: cv.clientHeight / 2 };
+  });
+  await page.mouse.click(clickPos.x, clickPos.y);
+  await page.waitForTimeout(300);
+  const panelState = await page.evaluate(() => {
+    const p = document.querySelector('#bpanel');
+    const visible = !p.hidden;
+    const title = document.querySelector('#bp-title').textContent;
+    const moneyBefore = EG.game.sim.money;
+    const svcBtn = document.querySelector('#bp-btn-svc');
+    if (svcBtn && !svcBtn.disabled) svcBtn.click();
+    const upBtn = document.querySelector('#bp-btn-up');
+    if (upBtn && !upBtn.disabled) upBtn.click();
+    const b = EG.game.sim.buildings[EG.game.sim.buildings.length - 1];
+    return {
+      visible, title,
+      spent: Math.round(moneyBefore - EG.game.sim.money),
+      condAfterSvc: b.cond, levelAfterUp: b.level,
+    };
+  });
+  console.log('panel v živé hře:', JSON.stringify(panelState));
+  if (!panelState.visible) throw new Error('panel správy se po kliknutí neotevřel');
+  if (!panelState.title.includes('Uhelná')) throw new Error('panel ukazuje špatnou budovu: ' + panelState.title);
+  if (panelState.condAfterSvc !== 1) throw new Error('servis přes UI nefunguje');
+  if (panelState.levelAfterUp !== 2) throw new Error('modernizace přes UI nefunguje');
+  await page.screenshot({ path: '/tmp/eg_panel.png' });
+
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {
     const { sim, map, renderer } = EG.game;

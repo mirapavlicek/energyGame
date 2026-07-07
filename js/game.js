@@ -10,6 +10,7 @@
   let map, sim, renderer;
   let tool = 'pan';            // pan | hydro | dam | coal | solar | wind | sub | line | demolish
   let lineFrom = null;         // budova, odkud táhneme vedení
+  let selected = null;         // budova otevřená v panelu správy
   let hover = [0, 0];
   let mouse = { x: 0, y: 0, down: false, panning: false, lastX: 0, lastY: 0 };
   let speed = 1;
@@ -47,6 +48,7 @@
     setupInput(canvas);
     setupToolbar();
     setupMinimap();
+    $('#bp-close').addEventListener('click', closePanel);
     sim.msg('Vítej! Postav elektrárnu, rozvodnu u města a spoj je vedením.');
 
     // ladicí přístup (používá i smoke test)
@@ -97,7 +99,8 @@
       const k = e.key.toLowerCase();
       const byHotkey = Object.entries(EG.BUILD).find(([, v]) => v.hotkey === k);
       if (byHotkey) setTool(byHotkey[0] === 'line' ? 'line' : byHotkey[0]);
-      else if (k === 'escape' || k === 'q') setTool('pan');
+      else if (k === 'escape') { if (selected) closePanel(); else setTool('pan'); }
+      else if (k === 'q') setTool('pan');
       else if (k === 'x') setTool('demolish');
       else if (k === ' ') { e.preventDefault(); speed = speed === 0 ? 1 : 0; updateSpeedLabel(); }
       else if (k === '+' || k === '=') { speed = Math.min(4, (speed || 1) * 2); updateSpeedLabel(); }
@@ -109,14 +112,15 @@
     const [gx, gy] = hover;
     if (tool === 'pan') {
       const b = sim.buildingAt(gx, gy);
-      if (b) selectInfo(b);
+      if (b) selectBuilding(b); else closePanel();
       return;
     }
     if (tool === 'demolish') {
       // klik na vedení? – najdi nejbližší segment do 0.6 dlaždice
       const l = lineNear(gx, gy);
       if (l && !sim.buildingAt(gx, gy)) { sim.removeLine(l); return; }
-      sim.demolish(gx, gy);
+      const b = sim.buildingAt(gx, gy);
+      if (sim.demolish(gx, gy) && b === selected) closePanel();
       return;
     }
     if (tool === 'line') {
@@ -194,9 +198,117 @@
     $('#btn-speed').textContent = speed === 0 ? '⏸ pauza' : '▶ ' + speed + '×';
   }
 
-  function selectInfo(b) {
+  /* ---------- panel správy budovy ---------- */
+  function selectBuilding(b) {
+    selected = b;
+    $('#bpanel').hidden = false;
+    buildPanelActions();
+    updatePanel();
+  }
+
+  function closePanel() {
+    selected = null;
+    $('#bpanel').hidden = true;
+  }
+
+  function bpButton(html, cls, onClick) {
+    const el = document.createElement('button');
+    el.className = 'bp-btn' + (cls ? ' ' + cls : '');
+    el.innerHTML = html;
+    el.addEventListener('click', () => { onClick(); buildPanelActions(); updatePanel(); });
+    $('#bp-actions').appendChild(el);
+    return el;
+  }
+
+  /* tlačítka se přestaví po každé akci (mění se ceny a úrovně) */
+  function buildPanelActions() {
+    const b = selected;
+    const box = $('#bp-actions');
+    box.innerHTML = '';
+    if (!b) return;
+
+    const svc = bpButton('🔧 Servis' + (b.broken ? ' (oprava poruchy)' : '') +
+      '<span class="cost" id="bp-svc-cost"></span>', b.broken ? 'danger' : '',
+      () => sim.service(b));
+    svc.id = 'bp-btn-svc';
+
+    const contract = bpButton('📋 Servisní smlouva <span class="cost">+20 % k ceně servisu</span>',
+      b.contract ? 'on' : '',
+      () => sim.setContract(b, !b.contract));
+    contract.id = 'bp-btn-contract';
+    contract.title = 'Technici vyjedou automaticky, když stav klesne pod 50 % nebo při poruše.';
+
+    const up = bpButton('⚙ Modernizace <span class="cost" id="bp-up-cost"></span>', '',
+      () => sim.upgrade(b));
+    up.id = 'bp-btn-up';
+    up.title = b.kind === 'sub'
+      ? 'Kvalitnější technologie rozvodny: výrazně pomalejší opotřebení.'
+      : 'Nové turbíny/panely/kotle: +25 % výkonu za úroveň a pomalejší opotřebení.';
+
+    if (b.kind === 'sub') {
+      const rng = bpButton('📡 Silnější transformátor <span class="cost" id="bp-rng-cost"></span>', '',
+        () => sim.upgradeRange(b));
+      rng.id = 'bp-btn-rng';
+      rng.title = 'Zvětší dosah rozvodny o 2 dlaždice.';
+    }
+
+    if (b.kind !== 'dam') {
+      bpButton('🗑 Zbourat <span class="cost">+' + Math.floor(EG.BUILD[b.kind].cost * 0.4) + '</span>', 'danger',
+        () => { if (sim.demolish(b.x, b.y)) closePanel(); });
+    }
+  }
+
+  function updatePanel() {
+    const b = selected;
+    if (!b) return;
+    // budova mohla mezitím zaniknout
+    if (!sim.buildings.includes(b)) { closePanel(); return; }
     const def = EG.BUILD[b.kind];
-    sim.msg(def.name + ' – výkon ' + b.out.toFixed(1) + ' MW');
+    $('#bp-title').textContent = def.name + ' [' + b.x + ',' + b.y + ']';
+
+    let rows = '';
+    if (b.kind === 'sub') {
+      rows += 'Dosah: <span class="val">' + sim.subRange(b) + ' dlaždic</span><br>';
+      rows += 'Odběr přes rozvodnu: <span class="val">' +
+        (sim.cityAssign || []).filter((ca) => ca.sub >= 0 && sim.buildings[ca.sub] === b)
+          .reduce((s, ca) => s + ca.served, 0).toFixed(0) + ' MW</span><br>';
+    } else {
+      rows += 'Výkon: <span class="val">' + b.out.toFixed(1) + ' / ' + b.gen.toFixed(1) + ' MW</span><br>';
+    }
+    rows += 'Úroveň: <span class="val">' + b.level + ' / ' + EG.MAX_LEVEL + '</span>';
+    if (b.kind === 'sub') rows += ' · dosah <span class="val">+' + (b.rangeLevel || 0) * 2 + '</span>';
+    rows += '<br>Provoz: <span class="val">' + (def.upkeep * (1 + 0.25 * (b.level - 1))).toFixed(1) + '/s</span>';
+    if (b.contract) rows += ' · <span class="val">smlouva ✓</span>';
+    if (b.broken) rows += '<br><span class="bad">⚠ PORUCHA – mimo provoz, nutný servis!</span>';
+    $('#bp-stats').innerHTML = rows;
+
+    const pct = Math.round(b.cond * 100);
+    $('#bp-cond-pct').textContent = pct + ' %';
+    const fill = $('#bp-cond-fill');
+    fill.style.width = pct + '%';
+    fill.style.background = b.broken ? '#ff5340' : pct > 60 ? '#5dbb63' : pct > 30 ? '#e8c84a' : '#ff8c40';
+
+    // živé ceny + dostupnost tlačítek
+    const svcCost = sim.serviceCost(b);
+    const svcBtn = $('#bp-btn-svc');
+    if (svcBtn) {
+      $('#bp-svc-cost').textContent = '−' + svcCost;
+      svcBtn.disabled = (!b.broken && b.cond > 0.97) || sim.money < svcCost;
+    }
+    const upBtn = $('#bp-btn-up');
+    if (upBtn) {
+      const c = sim.upgradeCost(b);
+      $('#bp-up-cost').textContent = c === null ? 'max' : '−' + c;
+      upBtn.disabled = c === null || sim.money < c;
+    }
+    const rngBtn = $('#bp-btn-rng');
+    if (rngBtn) {
+      const c = sim.rangeUpgradeCost(b);
+      $('#bp-rng-cost').textContent = c === null ? 'max' : '−' + c;
+      rngBtn.disabled = c === null || sim.money < c;
+    }
+    const cBtn = $('#bp-btn-contract');
+    if (cBtn) cBtn.classList.toggle('on', !!b.contract);
   }
 
   function updateHoverInfo() {
@@ -208,7 +320,10 @@
     let s = '[' + gx + ',' + gy + '] ' + (names[t] || '?');
     if (t === 6) s += ' · průtok ' + map.flow[map.idx(gx, gy)].toFixed(1);
     const b = sim.buildingAt(gx, gy);
-    if (b) s += ' · ' + EG.BUILD[b.kind].name + ' ' + b.out.toFixed(0) + '/' + b.gen.toFixed(0) + ' MW';
+    if (b) {
+      s += ' · ' + EG.BUILD[b.kind].name + ' ' + b.out.toFixed(0) + '/' + b.gen.toFixed(0) + ' MW';
+      s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round(b.cond * 100) + ' %';
+    }
     const city = map.cities.find((c) => Math.abs(c.x - gx) <= 2 && Math.abs(c.y - gy) <= 2);
     if (city) s += ' · ' + city.name + ' (' + city.pop + ' tis., napájení ' + Math.round((city.powered || 0) * 100) + ' %)';
     el.textContent = s;
@@ -329,7 +444,26 @@
       if (city && (city.powered || 0) < 0.5 && sim.sun < 0.15) dim = 0.55; // blackout v noci
       let tintR = dim, tintG = dim, tintB = dim;
       if (b && b.kind !== 'sub' && b.gen > 0.5 && b.out < 0.1) { tintG = 0.75; tintB = 0.7; } // odpojená elektrárna
+      if (b && b.broken) { tintR = 1; tintG = 0.35; tintB = 0.3; } // porucha
       renderer.pushSprite(x, y, sId, tintR, tintG, tintB, 1);
+    }
+
+    // vybraná budova: zvýraznění + dosah rozvodny
+    if (selected && sim.buildings.includes(selected)) {
+      renderer.pushSprite(selected.x, selected.y, S.SEL, 1, 1, 1, 0.9);
+      if (selected.kind === 'sub') {
+        const R = sim.subRange(selected);
+        for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+          if (Math.hypot(dx, dy) > R || (dx === 0 && dy === 0)) continue;
+          if ((dx + dy) % 2 !== 0) continue;
+          renderer.pushSprite(selected.x + dx, selected.y + dy, S.CITYRING, 1, 1, 1, 0.3);
+        }
+      }
+      // porucha nad vybranou budovou bliká
+      if (selected.broken) {
+        const bl = (Math.sin(performance.now() * 0.008) + 1) / 2;
+        renderer.pushSprite(selected.x, selected.y, S.BAD, 1, 1, 1, 0.3 + 0.5 * bl);
+      }
     }
 
     // dosah rozvodny při stavbě
@@ -355,11 +489,16 @@
       }
     }
 
-    // nenapájená města – blikající indikátor
+    // nenapájená města a porouchané budovy – blikající indikátor
     const blink = (Math.sin(performance.now() * 0.006) + 1) / 2;
     for (const c of map.cities) {
       if ((c.powered || 0) < 0.9) {
         renderer.pushSprite(c.x, c.y, S.BAD, 1, 1, 1, 0.25 + 0.5 * blink);
+      }
+    }
+    for (const b of sim.buildings) {
+      if (b.broken && b !== selected) {
+        renderer.pushSprite(b.x, b.y, S.BAD, 1, 1, 1, 0.2 + 0.4 * blink);
       }
     }
   }
@@ -374,6 +513,7 @@
     renderer.render(t / 1000);
     drawMinimap();
     updateHUD();
+    if (selected) updatePanel();
     requestAnimationFrame(loop);
   }
 

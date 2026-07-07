@@ -49,6 +49,11 @@
   const SUB_RANGE = 6;        // dosah rozvodny k městu
   const PRICE_PER_MWH = 0.055; // příjem za dodanou MW za sekundu hry
 
+  const MAX_LEVEL = 3;        // max. úroveň modernizace
+  const MAX_RANGE_LEVEL = 2;  // max. rozšíření dosahu rozvodny (+2 dlaždice / úroveň)
+  /* rychlost opotřebení – ztráta stavu za herní sekundu při plném vytížení */
+  const WEAR = { hydro: 0.0011, dam: 0.0006, coal: 0.0018, solar: 0.0008, wind: 0.0014, sub: 0.0007 };
+
   function Sim(map) {
     this.map = map;
     this.buildings = [];      // {id,kind,x,y,out,node}
@@ -110,7 +115,14 @@
     const cost = BUILD[kind].cost;
     if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
     this.money -= cost;
-    const b = { id: this.nextId++, kind, x, y, out: 0, gen: 0 };
+    const b = {
+      id: this.nextId++, kind, x, y, out: 0, gen: 0,
+      level: 1,          // úroveň modernizace (násobí výkon)
+      rangeLevel: 0,     // jen rozvodna: rozšíření dosahu
+      cond: 1,           // technický stav 0..1
+      broken: false,     // porucha – mimo provoz do servisu
+      contract: false,   // servisní smlouva (automatická údržba za přirážku)
+    };
     this.buildings.push(b);
     if (kind === 'dam') this._applyDam(b);
     this.msg(BUILD[kind].name + ' postavena (−' + cost + ')');
@@ -197,8 +209,71 @@
     this.msg('Vedení odstraněno');
   };
 
-  /* okamžitý výkon elektrárny */
-  Sim.prototype._genOf = function (b, sun, wind) {
+  /* ---------- správa budov (servis, smlouva, vylepšení) ---------- */
+
+  Sim.prototype.subRange = function (b) {
+    return SUB_RANGE + 2 * (b.rangeLevel || 0);
+  };
+
+  /* efektivita dle technického stavu – zanedbaná budova ztrácí výkon */
+  Sim.prototype.condFactor = function (b) {
+    if (b.broken) return 0;
+    return 0.35 + 0.65 * Math.min(1, Math.max(0, b.cond));
+  };
+
+  Sim.prototype.serviceCost = function (b) {
+    return Math.ceil(8 + BUILD[b.kind].cost * 0.3 * (1 - b.cond) + (b.broken ? BUILD[b.kind].cost * 0.15 : 0));
+  };
+
+  Sim.prototype.service = function (b, auto) {
+    const base = this.serviceCost(b);
+    const cost = auto ? Math.ceil(base * 1.2) : base; // smlouva má přirážku 20 %
+    if (this.money < cost) { if (!auto) this.msg('Nedostatek peněz na servis', 'warn'); return false; }
+    this.money -= cost;
+    b.cond = 1;
+    b.broken = false;
+    this.msg((auto ? 'Smluvní servis: ' : 'Servis: ') + BUILD[b.kind].name + ' (−' + cost + ')');
+    return true;
+  };
+
+  Sim.prototype.setContract = function (b, on) {
+    b.contract = !!on;
+    this.msg('Servisní smlouva ' + (b.contract ? 'uzavřena' : 'vypovězena') + ' – ' + BUILD[b.kind].name);
+  };
+
+  Sim.prototype.upgradeCost = function (b) {
+    if (b.level >= MAX_LEVEL) return null;
+    return Math.ceil(BUILD[b.kind].cost * 0.6 * b.level);
+  };
+
+  /* modernizace: +25 % výkonu za úroveň (u rozvodny +25 % kapacity připojených vedení) */
+  Sim.prototype.upgrade = function (b) {
+    const cost = this.upgradeCost(b);
+    if (cost === null) { this.msg('Už na maximální úrovni', 'warn'); return false; }
+    if (this.money < cost) { this.msg('Nedostatek peněz na modernizaci', 'warn'); return false; }
+    this.money -= cost;
+    b.level++;
+    this.msg(BUILD[b.kind].name + ' modernizována na úroveň ' + b.level + ' (−' + cost + ')');
+    return true;
+  };
+
+  Sim.prototype.rangeUpgradeCost = function (b) {
+    if (b.kind !== 'sub' || b.rangeLevel >= MAX_RANGE_LEVEL) return null;
+    return 80 * (b.rangeLevel + 1);
+  };
+
+  Sim.prototype.upgradeRange = function (b) {
+    const cost = this.rangeUpgradeCost(b);
+    if (cost === null) { this.msg('Dosah už nelze zvětšit', 'warn'); return false; }
+    if (this.money < cost) { this.msg('Nedostatek peněz na transformátor', 'warn'); return false; }
+    this.money -= cost;
+    b.rangeLevel++;
+    this.msg('Rozvodna: silnější transformátor, dosah ' + this.subRange(b) + ' dlaždic (−' + cost + ')');
+    return true;
+  };
+
+  /* okamžitý výkon elektrárny (bez vlivu stavu a modernizace) */
+  Sim.prototype._baseGenOf = function (b, sun, wind) {
     const m = this.map;
     switch (b.kind) {
       case 'hydro': {
@@ -219,6 +294,11 @@
       }
       default: return 0;
     }
+  };
+
+  /* skutečný výkon: základ × modernizace × technický stav */
+  Sim.prototype._genOf = function (b, sun, wind) {
+    return this._baseGenOf(b, sun, wind) * (1 + 0.25 * (b.level - 1)) * this.condFactor(b);
   };
 
   /* Poptávka města v MW – roste s populací, přes den vyšší */
@@ -250,8 +330,8 @@
       nodes[i].gen = wantGen[i];
     }
 
-    // města -> nejbližší rozvodna v dosahu
-    const subs = nodes.map((b, i) => (b.kind === 'sub' ? i : -1)).filter((i) => i >= 0);
+    // města -> nejbližší funkční rozvodna v dosahu (dosah roste s vylepšením)
+    const subs = nodes.map((b, i) => (b.kind === 'sub' && !b.broken ? i : -1)).filter((i) => i >= 0);
     const cityAssign = [];
     let totalDemand = 0;
     for (const c of this.map.cities) {
@@ -261,7 +341,7 @@
       for (const si of subs) {
         const b = nodes[si];
         const dist = Math.hypot(b.x - c.x, b.y - c.y);
-        if (dist <= SUB_RANGE && dist < bestD) { bestD = dist; best = si; }
+        if (dist <= this.subRange(b) && dist < bestD) { bestD = dist; best = si; }
       }
       cityAssign.push({ city: c, sub: best, demand: d, served: 0 });
     }
@@ -387,9 +467,35 @@
       }
     }
 
+    // --- opotřebení, poruchy a servisní smlouvy ---
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      if (!b.broken) {
+        // elektrárny se opotřebovávají podle vytížení, rozvodny podle přenášeného odběru
+        let util;
+        if (b.kind === 'sub') util = demandAt[i] > 0 ? 1 : 0.3;
+        else util = wantGen[i] > 0 ? gen[i] / Math.max(1e-6, wantGen[i]) : 0;
+        // modernizovaná budova se opotřebovává pomaleji
+        const wear = WEAR[b.kind] / (1 + 0.35 * (b.level - 1));
+        b.cond = Math.max(0, b.cond - wear * (0.35 + 0.65 * util) * dt);
+        // zanedbaná budova může selhat úplně
+        if (b.cond < 0.2 && Math.random() < dt * (0.2 - b.cond) * 0.6) {
+          b.broken = true;
+          this.msg('PORUCHA: ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] je mimo provoz!', 'warn');
+        }
+      }
+      // smluvní servis: technici vyjíždějí automaticky
+      if (b.contract && (b.broken || b.cond < 0.5)) {
+        if (!this.service(b, true) && this._contractWarnT !== Math.floor(this.time)) {
+          this._contractWarnT = Math.floor(this.time);
+          this.msg('Smluvní servis čeká – nedostatek peněz', 'warn');
+        }
+      }
+    }
+
     // --- ekonomika ---
     let upkeep = 0;
-    for (const b of this.buildings) upkeep += BUILD[b.kind].upkeep;
+    for (const b of this.buildings) upkeep += BUILD[b.kind].upkeep * (1 + 0.25 * (b.level - 1));
     for (const l of this.lines) upkeep += l.len * BUILD.line.upkeep;
     const income = delivered * PRICE_PER_MWH;
     this.money += (income - upkeep * 0.01) * dt;
@@ -408,4 +514,6 @@
   EG.BUILD = BUILD;
   EG.LINE_CAP = LINE_CAP;
   EG.SUB_RANGE = SUB_RANGE;
+  EG.MAX_LEVEL = MAX_LEVEL;
+  EG.MAX_RANGE_LEVEL = MAX_RANGE_LEVEL;
 })();

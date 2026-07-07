@@ -22,12 +22,28 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
 - Napájená města rostou a platí za energii; při výpadcích se lidé stěhují pryč.
 - Den/noc cyklus ovlivňuje poptávku i výrobu (slunce, vítr).
 
+### Správa budov
+
+Každou elektrárnu i rozvodnu lze **kliknutím otevřít** (v režimu prohlížení)
+a spravovat v panelu:
+
+- **Technický stav** – budovy se provozem opotřebovávají a ztrácí výkon;
+  pod 20 % stavu hrozí **porucha** a úplný výpadek.
+- **Servis** – jednorázová oprava, cena roste se zanedbaností (a s poruchou).
+- **Servisní smlouva** – technici vyjíždějí automaticky (pod 50 % stavu nebo
+  při poruše) za přirážku 20 %.
+- **Modernizace** (3 úrovně) – +25 % výkonu za úroveň a pomalejší opotřebení,
+  mírně vyšší provozní náklady.
+- **Silnější transformátor** (jen rozvodna) – dosah +2 dlaždice za úroveň.
+- **Zbourat** – vrátí 40 % ceny (přehradu zbourat nejde).
+
 ## Ovládání
 
 | Vstup | Akce |
 | --- | --- |
 | tažení myší | posun kamery |
 | kolečko | zoom ke kurzoru |
+| klik na budovu | panel správy (servis, smlouva, modernizace…) |
 | `1`–`6` | stavby (vodní, přehrada, uhelná, solár, vítr, rozvodna) |
 | `7` | vedení – klikej z budovy na budovu (řetězí se) |
 | `Q` / `Esc` | režim prohlížení |

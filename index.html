@@ -31,11 +31,28 @@
   <div id="log"></div>
   <canvas id="minimap" title="Klikni pro přesun kamery"></canvas>
 
+  <div id="bpanel" hidden>
+    <div id="bp-head">
+      <b id="bp-title"></b>
+      <button id="bp-close" title="Zavřít (Esc)">×</button>
+    </div>
+    <div id="bp-stats"></div>
+    <div id="bp-cond-row">
+      <span>Stav</span>
+      <div id="bp-cond-bar"><div id="bp-cond-fill"></div></div>
+      <span id="bp-cond-pct"></span>
+    </div>
+    <div id="bp-actions"></div>
+  </div>
+
   <div id="help">
     <b>Jak hrát:</b> postav elektrárnu (vodní <b>jen na řece</b> – výkon roste s průtokem),
     u města postav <b>rozvodnu</b> (dosah 6 dlaždic) a vše propoj <b>vedením</b> (nástroj 7,
     klikáním z budovy na budovu). Přehrada zaplaví údolí, dá velký výkon a posílí průtok
     po proudu. Hlídej přetížená vedení (červená) a napájej všechna města – rostou a platí.
+    <b>Klikni na elektrárnu či rozvodnu</b> (v režimu prohlížení) a spravuj ji: servis
+    opotřebení, servisní smlouva, modernizace výkonu, u rozvodny větší dosah. Zanedbaná
+    budova ztrácí výkon a může mít poruchu!
     <br><span class="dim">Myš: táhnutím posun, kolečko zoom · klávesy 1–7 nástroje, Q prohlížení, X bourání, mezerník pauza, +/− rychlost.</span>
   </div>
 
