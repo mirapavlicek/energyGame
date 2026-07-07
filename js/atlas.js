@@ -13,6 +13,7 @@
     WATER: 0, SAND: 1, GRASS: 2, FOREST: 3, HILL: 4, MOUNTAIN: 5, RIVER: 6, RESERVOIR: 7,
     HOUSE: 8, HOUSE2: 9, CENTER: 10, HYDRO: 11, DAM: 12, COAL: 13, SOLAR: 14, WIND: 15,
     SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22, XBORDER: 23,
+    STAR: 24, PIP: 25,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -309,6 +310,26 @@
       c.beginPath(); c.moveTo(AX - 4, AY - 52); c.lineTo(AX - 10, AY - 49); c.lineTo(AX - 4, AY - 46); c.closePath(); c.fill();
       c.fillStyle = '#7ed087';
       c.beginPath(); c.moveTo(AX + 4, AY - 52); c.lineTo(AX + 10, AY - 49); c.lineTo(AX + 4, AY - 46); c.closePath(); c.fill();
+    });
+
+    at(S.STAR, (c) => {
+      // malá zlatá hvězda – úroveň modernizace nad budovou
+      const cx = AX, cy = AY - 4, R = 5.5, r = 2.4;
+      c.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + i * Math.PI / 5;
+        const rad = i % 2 === 0 ? R : r;
+        c.lineTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad);
+      }
+      c.closePath();
+      c.fillStyle = '#ffd84d'; c.fill();
+      c.strokeStyle = 'rgba(140,100,10,0.9)'; c.lineWidth = 1; c.stroke();
+    });
+    at(S.PIP, (c) => {
+      // bílá tečka (obarvuje se tintem) – např. stav nabití zásobníku
+      c.beginPath(); c.arc(AX, AY - 4, 3.2, 0, Math.PI * 2);
+      c.fillStyle = '#ffffff'; c.fill();
+      c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 1; c.stroke();
     });
 
     at(S.SEL, (c) => {

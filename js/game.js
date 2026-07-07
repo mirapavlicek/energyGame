@@ -800,8 +800,31 @@
       if (ind && (ind.powered || 0) < 0.5) dim = 0.62; // stojící podnik potemní
       let tintR = dim, tintG = dim, tintB = dim;
       if (b && b.kind !== 'sub' && b.gen > 0.5 && b.out < 0.1) { tintG = 0.75; tintB = 0.7; } // odpojená elektrárna
+      if (b && !b.broken && b.cond < 0.7) {
+        // zanedbaná budova viditelně reziví/tmavne
+        const f = 0.55 + 0.45 * (b.cond / 0.7);
+        tintR *= 0.9 + 0.1 * f; tintG *= f; tintB *= f * 0.95;
+      }
       if (b && b.broken) { tintR = 1; tintG = 0.35; tintB = 0.3; } // porucha
       renderer.pushSprite(x, y, sId, tintR, tintG, tintB, 1);
+
+      // hvězdy modernizace nad budovou (úroveň 2 = ★, úroveň 3 = ★★)
+      if (b && b.level > 1) {
+        const nStars = b.level - 1;
+        for (let k = 0; k < nStars; k++) {
+          const d = (k - (nStars - 1) / 2) * 0.32;
+          renderer.pushSprite(x - 0.52 + d, y - 0.52 - d, S.STAR, 1, 1, 1, 0.95);
+        }
+      }
+      // ukazatel nabití zásobníku (3 tečky: zelená = plná, šedá = prázdná)
+      if (b && EG.STORAGE[b.kind]) {
+        const filled = Math.round((b.charge / EG.STORAGE[b.kind].cap) * 3);
+        for (let k = 0; k < 3; k++) {
+          const on = k < filled;
+          renderer.pushSprite(x + 0.5 - k * 0.24, y + 0.14 - k * 0.24, S.PIP,
+            on ? 0.35 : 0.5, on ? 0.95 : 0.55, on ? 0.4 : 0.55, on ? 0.95 : 0.55);
+        }
+      }
     }
 
     // vybraná budova: zvýraznění + dosah rozvodny
@@ -855,6 +878,10 @@
     for (const b of sim.buildings) {
       if (b.broken && b !== selected) {
         renderer.pushSprite(b.x, b.y, S.BAD, 1, 1, 1, 0.2 + 0.4 * blink);
+      }
+      // elektrárna bez paliva bliká oranžově
+      if (EG.FUEL[b.kind] && b.fuel <= 0) {
+        renderer.pushSprite(b.x, b.y, S.BAD, 1, 0.75, 0.1, 0.25 + 0.45 * blink);
       }
     }
     for (const ind of map.industries || []) {
