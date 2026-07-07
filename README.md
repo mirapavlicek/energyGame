@@ -135,6 +135,7 @@ a spravovat v panelu:
 | kolečko | zoom ke kurzoru |
 | klik na budovu | panel správy (servis, smlouva, modernizace, trafa…) |
 | `7` opakovaně | přepínání napěťové úrovně vedení |
+| napsat `funds` | cheat: +1 000 € |
 | `1`–`6` | stavby (vodní, přehrada, uhelná, solár, vítr, rozvodna) |
 | `7` | vedení – klikej z budovy na budovu (řetězí se) |
 | `Q` / `Esc` | režim prohlížení |
