@@ -303,13 +303,14 @@ const server = http.createServer((req, res) => {
     for (let i = 0; i < 50; i++) sim.tick(0.1);
 
     // 1. Kirchhoffův zákon: součet toků do každé přípojnice = injekce
+    // (ztráty vedení působí jako dodatečný odběr, půl na každém konci)
     const bal = new Map();
     const add = (key, v) => bal.set(key, (bal.get(key) || 0) + v);
     const idx = new Map();
     sim.buildings.forEach((b, i) => idx.set(b.id, i));
     for (const l of sim.lines) {
-      add(idx.get(l.a) + ':' + l.level, -l.flow);
-      add(idx.get(l.b) + ':' + l.level, +l.flow);
+      add(idx.get(l.a) + ':' + l.level, -l.flow - (l.loss || 0) / 2);
+      add(idx.get(l.b) + ':' + l.level, +l.flow - (l.loss || 0) / 2);
     }
     sim.buildings.forEach((b, i) => {
       if (b.kind === 'sub') {
@@ -343,6 +344,8 @@ const server = http.createServer((req, res) => {
       kvlDrop: +kvlDrop.toFixed(5),
       loopCarriesFlow: flowsSum > 1,
       nBuses: bal.size,
+      losses: +sim.stats.losses.toFixed(3),
+      balanceErr: +(sim.stats.produced - sim.stats.delivered - sim.stats.losses).toFixed(5),
     };
   });
   console.log('Kirchhoff:', JSON.stringify(kirchhoff));
@@ -351,6 +354,61 @@ const server = http.createServer((req, res) => {
   if (!kirchhoff.loopCarriesFlow) throw new Error('smyčkou nic neteče, KVL test je bezzubý');
   if (!(kirchhoff.kclErr < 0.01)) throw new Error('1. Kirchhoffův zákon porušen, max odchylka ' + kirchhoff.kclErr + ' MW');
   if (!(Math.abs(kirchhoff.kvlDrop) < 0.01)) throw new Error('2. Kirchhoffův zákon porušen, součet úbytků ' + kirchhoff.kvlDrop);
+  if (!(kirchhoff.losses > 0)) throw new Error('síť pod zátěží nemá žádné ztráty');
+  if (!(Math.abs(kirchhoff.balanceErr) < 0.01)) throw new Error('výroba ≠ dodávka + ztráty: ' + kirchhoff.balanceErr);
+
+  // --- ztráty na vedení: stejná trasa po VN 22 kV ztrácí víc než po VVN 110 kV ---
+  const losses = await page.evaluate(() => {
+    // stejná geometrie, jen prostřední úsek jednou 110 kV a jednou 22 kV
+    const build = (linkLevel) => {
+      const map = EG.generateMap(160, 42);
+      const sim = new EG.Sim(map);
+      sim.money = 1000000;
+      const c = map.cities[0];
+      let sB = null; // rozvodna u města
+      for (let dy = -3; dy <= 3 && !sB; dy++) for (let dx = -3; dx <= 3; dx++) {
+        if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sB = sim.place('sub', c.x + dx, c.y + dy); break; }
+      }
+      let sA = null; // vzdálená rozvodna u zdroje (10–12 dlaždic)
+      outerA:
+      for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+        const d = Math.hypot(x - sB.x, y - sB.y);
+        if (d >= 10 && d <= 12 && sim.canPlace('sub', x, y).ok) { sA = sim.place('sub', x, y); break outerA; }
+      }
+      let coal = null;
+      for (let r = 1; r <= 5 && !coal; r++)
+        for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+          if (sim.canPlace('coal', sA.x + dx, sA.y + dy).ok) { coal = sim.place('coal', sA.x + dx, sA.y + dy); break; }
+      // trafa: sA převádí 220 na úroveň spoje, sB z úrovně spoje na NN
+      sim.buyTrafo(sA, 't220_110');
+      sim.buyTrafo(sB, 't110_22');
+      sim.buyTrafo(sB, 't22_04');
+      if (linkLevel === 22) sim.buyTrafo(sA, 't110_22');
+      if (!sim.connect(coal, sA, 220)) return { fail: 'coal-sA' };
+      if (!sim.connect(sA, sB, linkLevel)) return { fail: 'sA-sB @' + linkLevel };
+      for (let i = 0; i < 40; i++) sim.tick(0.1);
+      return {
+        losses: sim.stats.losses,
+        delivered: sim.stats.delivered,
+        produced: sim.stats.produced,
+        linkLoss: sim.lines[1].loss,
+      };
+    };
+    const hi = build(110);
+    const lo = build(22);
+    return {
+      hiFail: hi.fail, loFail: lo.fail,
+      hiLoss: +hi.losses.toFixed(3), loLoss: +lo.losses.toFixed(3),
+      hiLink: +hi.linkLoss.toFixed(3), loLink: +lo.linkLoss.toFixed(3),
+      hiDelivered: +hi.delivered.toFixed(1), loDelivered: +lo.delivered.toFixed(1),
+      hiProducedMore: hi.produced > hi.delivered,
+    };
+  });
+  console.log('ztráty vedení:', JSON.stringify(losses));
+  if (losses.hiFail || losses.loFail) throw new Error('scénář ztrát se nepostavil: ' + (losses.hiFail || losses.loFail));
+  if (!(losses.hiLink > 0 && losses.loLink > 0)) throw new Error('zatížené vedení nemá ztráty');
+  if (!(losses.loLink > losses.hiLink * 2)) throw new Error('22 kV neztrácí výrazně víc než 110 kV: ' + losses.loLink + ' vs ' + losses.hiLink);
+  if (!losses.hiProducedMore) throw new Error('výroba nekryje ztráty (produced <= delivered)');
 
   // --- panel správy v živé hře: klik na budovu jako hráč ---
   const panel = await page.evaluate(() => {
