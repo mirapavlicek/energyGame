@@ -15,6 +15,14 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
   výkon a **posílí průtok** po proudu – vodní elektrárny níže pak vyrábí víc.
 - Dále: uhelná elektrárna (stabilní, drahý provoz), solární park (jen ve dne),
   větrné turbíny (kolísají s větrem, na kopcích víc).
+- **Zásobníky energie**: **přečerpávací elektrárna** (jen na kopci do 3 dlaždic
+  od vody; 300 MWs, ±70 MW, účinnost 75 %, připojení 110 kV) a **bateriové
+  úložiště** (kdekoli na pevnině; 80 MWs, ±25 MW, účinnost 90 %, připojení
+  22 kV). Automaticky nabíjejí z přebytků své sítě a vybíjejí při deficitu –
+  ideální na solární poledne vs. večerní špičku.
+- **Regulační trafa**: k instalovanému trafu lze dokoupit přepínač odboček
+  (50 % ceny trafa) a pak tok trafem řídit – **▲ přednostní tok** ho posílí,
+  **▼ škrcení** ho omezí a přesměruje výkon na paralelní cesty.
 - Města napájíš přes **rozvodny** (dosah 6 dlaždic) a vše spojuješ **vedením**.
 - **Toky v síti** se počítají zjednodušeným DC power-flow modelem – energie si
   sama najde cesty, delší vedení „klade větší odpor". Přetížené trasy červeně

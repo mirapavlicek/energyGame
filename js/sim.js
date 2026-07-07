@@ -38,6 +38,16 @@
       desc: 'Napájí města do vzdálenosti 6 dlaždic. Bez ní města nesvítí.',
       hotkey: '6',
     },
+    psh: {
+      name: 'Přečerpávací elektrárna', cost: 650, upkeep: 5,
+      desc: 'Na kopci u vody. Zásobník 300 MWs: čerpá přebytky, turbínuje při deficitu (účinnost 75 %). Připojení 110 kV.',
+      hotkey: '8',
+    },
+    battery: {
+      name: 'Zásobník energie', cost: 260, upkeep: 1.5,
+      desc: 'Bateriové úložiště 80 MWs: nabíjí se z přebytků, vybíjí při deficitu (účinnost 90 %). Připojení 22 kV.',
+      hotkey: '9',
+    },
     line: {
       name: 'Vedení', cost: 0, upkeep: 0,
       desc: 'Spojuje stavby. Vyber napěťovou úroveň – liší se kapacitou, cenou i max. délkou.',
@@ -61,7 +71,17 @@
   };
 
   /* výstupní napětí elektráren – vedení k nim musí mít stejnou úroveň */
-  const GEN_LEVEL = { dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22 };
+  const GEN_LEVEL = { dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22, psh: 110, battery: 22 };
+
+  /* Zásobníky energie: kapacita (MW·s), max. výkon a round-trip účinnost.
+     Nabíjí se automaticky z přebytků své sítě, vybíjí při deficitu. */
+  const STORAGE = {
+    psh: { cap: 300, maxP: 70, eff: 0.75 },
+    battery: { cap: 80, maxP: 25, eff: 0.90 },
+  };
+
+  /* regulační trafo (přepínač odboček): násobí „vodivost" trafa v power flow */
+  const TRAFO_REG = { auto: 1, boost: 3, limit: 0.25 };
 
   /* Trafa do rozvoden: převádí mezi dvěma úrovněmi, mají kapacitu a cenu.
      Rozvodna bez příslušného trafa danou úroveň vůbec nepřipojí.
@@ -89,7 +109,7 @@
   const MAX_LEVEL = 3;        // max. úroveň modernizace
   const MAX_RANGE_LEVEL = 2;  // max. rozšíření dosahu rozvodny (+2 dlaždice / úroveň)
   /* rychlost opotřebení – ztráta stavu za herní sekundu při plném vytížení */
-  const WEAR = { hydro: 0.0011, dam: 0.0006, coal: 0.0018, solar: 0.0008, wind: 0.0014, sub: 0.0007 };
+  const WEAR = { hydro: 0.0011, dam: 0.0006, coal: 0.0018, solar: 0.0008, wind: 0.0014, sub: 0.0007, psh: 0.0008, battery: 0.0012 };
 
   const SEASONS = ['jaro', 'léto', 'podzim', 'zima'];
   const YEAR_DAYS = 12;       // herních dní v roce (3 na sezónu)
@@ -146,8 +166,19 @@
         if (t === TT.WATER || t === TT.RIVER) return { ok: false, why: 'Ne na vodě' };
         return { ok: true };
       case 'sub':
+      case 'battery':
         if (t === TT.WATER || t === TT.RIVER || t === TT.MOUNTAIN) return { ok: false, why: 'Jen na pevnině' };
         return { ok: true };
+      case 'psh': {
+        if (t !== TT.HILL) return { ok: false, why: 'Jen na kopci' };
+        for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= m.size || ny >= m.size) continue;
+          const nt = m.type[m.idx(nx, ny)];
+          if (nt === TT.WATER || nt === TT.RIVER || nt === 7) return { ok: true };
+        }
+        return { ok: false, why: 'Kopec musí být do 3 dlaždic od vody' };
+      }
     }
     return { ok: false, why: '?' };
   };
@@ -170,6 +201,11 @@
       b.trafos = {};     // klíč z TRAFOS -> počet kusů
       b.trafoLoad = {};  // klíč -> aktuální zatížení 0..1+
       b.trafoFlow = {};  // klíč -> tok v MW (kladný = z vyšší na nižší hladinu)
+      b.trafoReg = {};   // klíč -> 'auto' | 'boost' | 'limit' (jen s koupenou regulací)
+    }
+    if (STORAGE[kind]) {
+      b.charge = 0;      // uložená energie (MW·s)
+      b.storMode = 'klid';
     }
     if (FUEL[kind]) {
       b.fuel = FUEL[kind].cap * 0.5; // startovní zásoba na rozjezd
@@ -267,6 +303,30 @@
     this.money -= t.cost;
     b.trafos[key] = (b.trafos[key] || 0) + 1;
     this.msg('Trafo ' + t.name + ' instalováno (−' + t.cost + ')');
+    return true;
+  };
+
+  /* regulační trafo: přepínač odboček – umožní tok trafem posílit či škrtit */
+  Sim.prototype.trafoRegCost = function (key) {
+    return Math.ceil(TRAFOS[key].cost * 0.5);
+  };
+
+  Sim.prototype.buyTrafoReg = function (b, key) {
+    if (b.kind !== 'sub' || !(b.trafos || {})[key]) { this.msg('Nejdřív kup samotné trafo', 'warn'); return false; }
+    if (b.trafoReg[key]) { this.msg('Regulace už je instalovaná', 'warn'); return false; }
+    const cost = this.trafoRegCost(key);
+    if (this.money < cost) { this.msg('Nedostatek peněz na regulaci', 'warn'); return false; }
+    this.money -= cost;
+    b.trafoReg[key] = 'auto';
+    this.msg('Regulační trafo ' + TRAFOS[key].name + ': přepínač odboček instalován (−' + cost + ')');
+    return true;
+  };
+
+  Sim.prototype.setTrafoReg = function (b, key, mode) {
+    if (!(b.trafoReg || {})[key] || !TRAFO_REG[mode]) return false;
+    b.trafoReg[key] = mode;
+    const label = { auto: 'automatika', boost: 'přednostní tok', limit: 'škrcení toku' }[mode];
+    this.msg('Trafo ' + TRAFOS[key].name + ': ' + label);
     return true;
   };
 
@@ -576,7 +636,8 @@
         if (!count) continue;
         const t = TRAFOS[key];
         const a = busOf.get(i + ':' + t.hi), bb = busOf.get(i + ':' + t.lo);
-        edges.push({ a, b: bb, w: 2, trafo: { sub: b, key, cap: t.cap * count } });
+        const regW = TRAFO_REG[(b.trafoReg || {})[key]] || 1; // regulace mění vodivost
+        edges.push({ a, b: bb, w: 2 * regW, trafo: { sub: b, key, cap: t.cap * count } });
       }
     }
 
@@ -652,6 +713,32 @@
       if (ia.bus >= 0) compDem[comp[ia.bus]] += ia.demand;
     }
 
+    /* --- zásobníky energie (baterie, přečerpávačky): dispečink ---
+       Přebytek v komponentě nabíjí (zásobník = dodatečný odběr),
+       deficit vybíjí (zásobník = zdroj). Výkon omezuje stav zařízení. */
+    const storP = new Float64Array(n); // + vybíjí (výroba) / − nabíjí (odběr)
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      const sd = STORAGE[b.kind];
+      if (!sd || genBus[i] < 0) continue;
+      b.storMode = 'klid';
+      const c = comp[genBus[i]];
+      const maxP = sd.maxP * this.condFactor(b) * (1 + 0.25 * (b.level - 1));
+      if (maxP <= 0) continue;
+      const bal = compGen[c] - compDem[c];
+      if (bal > 0.5 && b.charge < sd.cap - 0.1) {
+        const p = Math.min(maxP, bal, (sd.cap - b.charge) / Math.max(1e-6, sd.eff * dt));
+        storP[i] = -p;
+        compDem[c] += p;
+        b.storMode = 'nabíjí';
+      } else if (bal < -0.5 && b.charge > 0.1) {
+        const p = Math.min(maxP, -bal, b.charge / Math.max(1e-6, dt));
+        storP[i] = p;
+        compGen[c] += p;
+        b.storMode = 'vybíjí';
+      }
+    }
+
     // --- DC power flow: L·θ = P, sdružené gradienty (CG) ---
     // Injekce jsou v každé komponentě bilancované, takže je systém řešitelný;
     // CG na Laplacián konverguje řádově rychleji než Gauss–Seidel.
@@ -708,7 +795,7 @@
         if (genBus[i] < 0) continue;
         const c = comp[genBus[i]];
         const u1 = compGen[c] > 0 ? Math.min(1, compDem[c] / compGen[c]) : 0;
-        inj1[genBus[i]] += wantGen[i] * u1;
+        inj1[genBus[i]] += wantGen[i] * u1 + storP[i];
       }
       solveCG(inj1);
     }
@@ -771,19 +858,41 @@
     for (const ia of indAssign) {
       if (ia.bus >= 0) compServed[comp[ia.bus]] += ia.served;
     }
+    // nabíjení zásobníků se krátí stejně jako ostatní odběry (kvůli ztrátám)
+    const compCharge = new Float64Array(nc);
+    for (let i = 0; i < n; i++) {
+      if (storP[i] < 0) {
+        const c = comp[genBus[i]];
+        const ratio = compDem[c] > 0 ? Math.min(1, Math.max(0, compGen[c] - compLoss[c]) / compDem[c]) : 0;
+        storP[i] *= ratio;
+        compCharge[c] += -storP[i];
+      }
+    }
     for (let i = 0; i < n; i++) {
       if (genBus[i] < 0) { nodes[i].out = 0; continue; }
       const c = comp[genBus[i]];
-      // elektrárny kryjí odběr měst + ztráty (přebytek se zahodí)
-      const useRatio = compGen[c] > 0 ? Math.min(1, (compServed[c] + compLoss[c]) / compGen[c]) : 0;
+      // elektrárny kryjí odběr měst a průmyslu + nabíjení zásobníků + ztráty
+      const useRatio = compGen[c] > 0
+        ? Math.min(1, (compServed[c] + compCharge[c] + compLoss[c]) / compGen[c]) : 0;
       gen[i] = wantGen[i] * useRatio;
       produced += gen[i];
-      inj[genBus[i]] += gen[i];
+      inj[genBus[i]] += gen[i] + storP[i];
       nodes[i].out = gen[i];
     }
     for (let u = 0; u < nb; u++) inj[u] -= lossAt[u];
     for (let c = 0; c < nc; c++) totalLoss += compLoss[c];
     solveCG(inj);
+
+    // --- zásobníky: aktualizace uložené energie (účinnost při nabíjení) ---
+    for (let i = 0; i < n; i++) {
+      const sd = STORAGE[nodes[i].kind];
+      if (!sd) continue;
+      const b = nodes[i];
+      if (storP[i] < 0) b.charge = Math.min(sd.cap, b.charge + (-storP[i]) * sd.eff * dt);
+      else if (storP[i] > 0) { b.charge = Math.max(0, b.charge - storP[i] * dt); produced += storP[i]; }
+      b.out = storP[i];
+      if (Math.abs(storP[i]) < 0.05) b.storMode = 'klid';
+    }
 
     // toky hranami + přetížení vedení a traf
     let overloaded = 0, overloadedTrafos = 0;
@@ -928,6 +1037,8 @@
   EG.Sim = Sim;
   EG.BUILD = BUILD;
   EG.FUEL = FUEL;
+  EG.STORAGE = STORAGE;
+  EG.TRAFO_REG = TRAFO_REG;
   EG.LEVELS = LEVELS;
   EG.LINE_TYPES = LINE_TYPES;
   EG.GEN_LEVEL = GEN_LEVEL;
