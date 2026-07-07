@@ -85,6 +85,9 @@
   /* rychlost opotřebení – ztráta stavu za herní sekundu při plném vytížení */
   const WEAR = { hydro: 0.0011, dam: 0.0006, coal: 0.0018, solar: 0.0008, wind: 0.0014, sub: 0.0007 };
 
+  const SEASONS = ['jaro', 'léto', 'podzim', 'zima'];
+  const YEAR_DAYS = 12;       // herních dní v roce (3 na sezónu)
+
   function Sim(map) {
     this.map = map;
     this.buildings = [];      // {id,kind,x,y,out,node}
@@ -360,17 +363,18 @@
   /* okamžitý výkon elektrárny (bez vlivu stavu a modernizace) */
   Sim.prototype._baseGenOf = function (b, sun, wind) {
     const m = this.map;
+    const fx = this.seasonFx || { hydro: 1, solar: 1 };
     switch (b.kind) {
       case 'hydro': {
-        const f = m.flow[m.idx(b.x, b.y)];
+        const f = m.flow[m.idx(b.x, b.y)] * fx.hydro;
         return Math.min(80, 6 + f * 6);
       }
       case 'dam': {
-        const f = m.flow[m.idx(b.x, b.y)];
+        const f = m.flow[m.idx(b.x, b.y)] * fx.hydro;
         return Math.min(150, 30 + f * 7 + (b.reservoir || 0) * 3);
       }
       case 'coal': return 90;
-      case 'solar': return 35 * sun;
+      case 'solar': return 35 * sun * fx.solar;
       case 'wind': {
         const TT = T();
         const t = m.type[m.idx(b.x, b.y)];
@@ -389,7 +393,8 @@
   /* Poptávka města v MW – každé město má vlastní potřebu: roste s populací,
      spotřeba na obyvatele a denní profil se liší podle charakteru města. */
   Sim.prototype._cityDemand = function (c, dayPhase) {
-    const base = c.pop * (c.needPerCap || 1.15);
+    // sezónní zátěž: v zimě topení a osvětlení, v létě útlum
+    const base = c.pop * (c.needPerCap || 1.15) * ((this.seasonFx || {}).demand || 1);
     const h = (6 + dayPhase * 24) % 24;
     let curve;
     if (c.kind === 'ind') {
@@ -414,7 +419,9 @@
     const shift = (ind.type === 'hut' || ind.type === 'chemicka')
       ? 0.85 + 0.15 * ((h >= 6 && h < 22) ? 1 : 0)
       : ((h >= 6 && h < 22) ? 1 : 0.3);
-    return ind.demand * shift;
+    // průmysl je na sezónu citlivý zhruba z poloviny oproti městům
+    const season = 1 + 0.5 * (((this.seasonFx || {}).demand || 1) - 1);
+    return ind.demand * shift * season;
   };
 
   /* --- pomalý růst měst: s populací přibývá zástavba na mapě --- */
@@ -453,9 +460,33 @@
   /* hlavní tick simulace – dt v herních sekundách */
   Sim.prototype.tick = function (dt) {
     this.time += dt;
-    const dayPhase = (this.time % this.dayLen) / this.dayLen; // 0..1, 0 = ráno
-    const sun = Math.max(0, Math.sin(dayPhase * Math.PI * 2 - Math.PI * 0.1));
-    const wind = 0.35 + 0.65 * EG.rng.fbm(this.time * 0.01 + this._noiseT, 3.7, 42, 3);
+    const dayPhase = (this.time % this.dayLen) / this.dayLen; // 0..1, 0 = ráno (6:00)
+
+    /* --- roční období: plynulé sezónní koeficienty (kosinus po roce) ---
+       rok = 12 dní, jaro [0;0,25) … zima [0,75;1). V zimě vyšší spotřeba
+       a krátké dny, v létě silné slunce, na jaře tání (průtoky), na podzim vítr. */
+    const yearLen = this.dayLen * YEAR_DAYS;
+    const yp = (this.time % yearLen) / yearLen;
+    const cosAt = (center) => Math.cos(2 * Math.PI * (yp - center));
+    this.yearPhase = yp;
+    this.day = Math.floor(this.time / this.dayLen) + 1;
+    this.seasonIdx = Math.floor(yp * 4) % 4;
+    this.seasonName = SEASONS[this.seasonIdx];
+    this.seasonFx = {
+      demand: 1 + 0.20 * cosAt(0.875),   // zima 1,2× · léto 0,8×
+      solar: 1 + 0.35 * cosAt(0.375),    // léto 1,35× · zima 0,65×
+      wind: 1 + 0.18 * cosAt(0.625),     // podzim 1,18× · jaro 0,82×
+      hydro: 1 + 0.30 * cosAt(0.125),    // jarní tání 1,3× · pozdní léto 0,7×
+      daylight: 12 + 4.5 * cosAt(0.375), // délka dne v hodinách: léto 16,5 · zima 7,5
+    };
+
+    // slunce: půlvlna kolem 13:00, šířka podle sezónní délky dne
+    const h = (6 + dayPhase * 24) % 24;
+    const dh = Math.min(Math.abs(h - 13), 24 - Math.abs(h - 13));
+    const sun = dh <= this.seasonFx.daylight / 2
+      ? Math.cos(Math.PI * dh / this.seasonFx.daylight) : 0;
+    const wind = Math.max(0, Math.min(1.6,
+      (0.35 + 0.65 * EG.rng.fbm(this.time * 0.01 + this._noiseT, 3.7, 42, 3)) * this.seasonFx.wind));
     this.sun = sun; this.wind = wind; this.dayPhase = dayPhase;
 
     // --- sestavit přípojnice: bus = (stavba, napěťová úroveň) ---

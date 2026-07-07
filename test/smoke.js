@@ -525,6 +525,53 @@ const server = http.createServer((req, res) => {
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
+  // --- roční období: proměnná zátěž a výroba dle času a sezóny ---
+  const seasons = await page.evaluate(() => {
+    // sim posazený na daný den v roce (0..11) a hodinu dne
+    const at = (dayInYear, hour) => {
+      const map = EG.generateMap(160, 42);
+      const sim = new EG.Sim(map);
+      sim.time = dayInYear * sim.dayLen + ((hour - 6 + 24) % 24) / 24 * sim.dayLen;
+      sim.tick(0.0001);
+      return sim;
+    };
+    const winterNoon = at(10, 13);  // zima (den 10 z 12)
+    const summerNoon = at(4, 13);   // léto
+    const springNoon = at(1, 13);   // jaro
+    const autumnNoon = at(7, 13);   // podzim
+    const c = winterNoon.map.cities[0];
+    const cS = summerNoon.map.cities[0];
+    const noonPhase = (13 - 6) / 24;
+    const fakeSolar = { kind: 'solar', level: 1, cond: 1, broken: false, x: 0, y: 0 };
+    const winterEve = at(10, 18.5); // 18:30 – v zimě už tma
+    const summerEve = at(4, 18.5);  // v létě ještě svítí
+    return {
+      names: [at(0.5, 12).seasonName, at(3.5, 12).seasonName, at(6.5, 12).seasonName, at(9.5, 12).seasonName],
+      demandWinter: +winterNoon._cityDemand(c, noonPhase).toFixed(1),
+      demandSummer: +summerNoon._cityDemand(cS, noonPhase).toFixed(1),
+      winterHigher: winterNoon._cityDemand(c, noonPhase) > summerNoon._cityDemand(cS, noonPhase) * 1.3,
+      solarWinter: +winterNoon._genOf(fakeSolar, winterNoon.sun, 0).toFixed(1),
+      solarSummer: +summerNoon._genOf(fakeSolar, summerNoon.sun, 0).toFixed(1),
+      hydroSpring: +springNoon.seasonFx.hydro.toFixed(2),
+      hydroAutumn: +autumnNoon.seasonFx.hydro.toFixed(2),
+      windAutumn: +autumnNoon.seasonFx.wind.toFixed(2),
+      windSpring: +springNoon.seasonFx.wind.toFixed(2),
+      eveSunWinter: +winterEve.sun.toFixed(2),
+      eveSunSummer: +summerEve.sun.toFixed(2),
+      indSeasonal: winterNoon._industryDemand(winterNoon.map.industries[0], noonPhase) >
+        summerNoon._industryDemand(summerNoon.map.industries[0], noonPhase),
+    };
+  });
+  console.log('sezóny:', JSON.stringify(seasons));
+  if (JSON.stringify(seasons.names) !== JSON.stringify(['jaro', 'léto', 'podzim', 'zima']))
+    throw new Error('sezóny se nestřídají správně: ' + JSON.stringify(seasons.names));
+  if (!seasons.winterHigher) throw new Error('zimní spotřeba není vyšší než letní: ' + seasons.demandWinter + ' vs ' + seasons.demandSummer);
+  if (!(seasons.solarSummer > seasons.solarWinter * 1.8)) throw new Error('letní solár nepřevyšuje zimní: ' + seasons.solarSummer + ' vs ' + seasons.solarWinter);
+  if (!(seasons.hydroSpring > seasons.hydroAutumn * 1.4)) throw new Error('jarní tání nezvedá průtoky: ' + seasons.hydroSpring + ' vs ' + seasons.hydroAutumn);
+  if (!(seasons.windAutumn > seasons.windSpring)) throw new Error('podzim není větrnější než jaro');
+  if (!(seasons.eveSunWinter === 0 && seasons.eveSunSummer > 0.3)) throw new Error('délka dne se sezónou nemění: ' + seasons.eveSunWinter + ' / ' + seasons.eveSunSummer);
+  if (!seasons.indSeasonal) throw new Error('průmysl nereaguje na sezónu');
+
   // --- schéma rozvodny: přípojnice a toky výkonu (kam výkon jde) ---
   const schema = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);

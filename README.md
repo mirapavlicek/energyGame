@@ -69,6 +69,12 @@ s trafem 110/22 kV + 22/0,4 kV → město.
   VN trafa ho nenapojí – a platí o **40 % víc** za MWh než města. Podnik bez
   proudu stojí a hlásí odstávku.
 - Den/noc cyklus ovlivňuje poptávku i výrobu (slunce, vítr).
+- **Roční období** (rok = 12 dní, 3 dny na sezónu, plynulé přechody):
+  v **zimě** je spotřeba měst ~1,2× (topení, osvětlení) a den jen ~7,5 h,
+  v **létě** spotřeba klesá na ~0,8× a slunce svítí ~16,5 h se silnějším
+  výkonem solárů, **jarní tání** zvedá průtoky řek (vodní elektrárny ~1,3×,
+  pozdní léto naopak ~0,7×) a **podzim** přináší nejvíc větru. Průmysl je
+  na sezónu citlivý zhruba z poloviny. HUD ukazuje den i sezónu.
 
 ### Správa budov
 
