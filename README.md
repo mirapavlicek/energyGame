@@ -86,6 +86,10 @@ a spravovat v panelu:
 - **Servis** – jednorázová oprava, cena roste se zanedbaností (a s poruchou).
 - **Servisní smlouva** – technici vyjíždějí automaticky (pod 50 % stavu nebo
   při poruše) za přirážku 20 %.
+- **Palivo** (klasické elektrárny) – uhelná má sklad uhlí (240 t, při stavbě
+  z poloviny plný) a spotřebovává ho podle skutečně vyrobených MWh. **Bez
+  uhlí stojí!** Palivo se kupuje v panelu, nebo **smlouvou na dodávky**
+  (automaticky pod 25 % zásoby, +15 % k ceně). Nízká zásoba se hlásí.
 - **Modernizace** (3 úrovně) – +25 % výkonu za úroveň a pomalejší opotřebení,
   mírně vyšší provozní náklady.
 - **Schéma a toky** (jen rozvodna) – živé jednopólové schéma: přípojnice po

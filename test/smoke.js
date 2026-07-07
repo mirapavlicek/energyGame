@@ -525,6 +525,72 @@ const server = http.createServer((req, res) => {
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
+  // --- palivo klasických elektráren: spotřeba, zastavení bez uhlí, nákup, smlouva ---
+  const fuel = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    // uhelná + rozvodna s kaskádou traf u města (ať elektrárna reálně vyrábí)
+    const c = map.cities[0];
+    let sub = null;
+    for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.connect(coal, sub, 220);
+
+    const startFuel = coal.fuel;
+    const capHalf = Math.abs(startFuel - EG.FUEL.coal.cap * 0.5) < 1;
+    for (let i = 0; i < 50; i++) sim.tick(0.1);
+    const afterFuel = coal.fuel;
+    const consumes = afterFuel < startFuel - 0.1;
+    const genWithFuel = coal.out;
+
+    // bez paliva elektrárna stojí
+    coal.fuel = 0;
+    for (let i = 0; i < 10; i++) sim.tick(0.1);
+    const genNoFuel = coal.gen;
+    const cityDark = map.cities[0].powered;
+
+    // nákup doplní sklad a stojí peníze
+    const moneyBefore = sim.money;
+    const cost = sim.fuelCost(coal);
+    sim.buyFuel(coal);
+    const paid = Math.round(moneyBefore - sim.money);
+    const refilled = coal.fuel > EG.FUEL.coal.cap - 1;
+    for (let i = 0; i < 10; i++) sim.tick(0.1);
+    const genAgain = coal.out;
+
+    // smlouva na palivo doplňuje automaticky
+    coal.fuel = EG.FUEL.coal.cap * 0.1;
+    sim.setFuelContract(coal, true);
+    sim.tick(0.1);
+    const contractRefilled = coal.fuel > EG.FUEL.coal.cap * 0.5;
+
+    return {
+      capHalf, consumes,
+      startFuel: +startFuel.toFixed(1), afterFuel: +afterFuel.toFixed(1),
+      genWithFuel: +genWithFuel.toFixed(1), genNoFuel: +genNoFuel.toFixed(1),
+      cityDark: +cityDark.toFixed(2),
+      paid, costMatches: paid === cost, refilled,
+      genAgain: +genAgain.toFixed(1),
+      contractRefilled,
+    };
+  });
+  console.log('palivo:', JSON.stringify(fuel));
+  if (!fuel.capHalf) throw new Error('nová uhelná nemá poloviční sklad');
+  if (!fuel.consumes) throw new Error('elektrárna nespotřebovává palivo: ' + fuel.startFuel + ' -> ' + fuel.afterFuel);
+  if (!(fuel.genWithFuel > 10)) throw new Error('uhelná s palivem nevyrábí');
+  if (fuel.genNoFuel !== 0) throw new Error('uhelná bez paliva pořád vyrábí: ' + fuel.genNoFuel);
+  if (!(fuel.cityDark < 0.1)) throw new Error('město svítí i bez paliva elektrárny');
+  if (!fuel.refilled || !fuel.costMatches || !(fuel.paid > 0)) throw new Error('nákup paliva nefunguje: ' + JSON.stringify(fuel));
+  if (!(fuel.genAgain > 10)) throw new Error('po doplnění paliva se výroba neobnovila');
+  if (!fuel.contractRefilled) throw new Error('smlouva na palivo nedoplňuje sklad');
+
   // --- roční období: proměnná zátěž a výroba dle času a sezóny ---
   const seasons = await page.evaluate(() => {
     // sim posazený na daný den v roce (0..11) a hodinu dne
