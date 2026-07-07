@@ -1285,6 +1285,43 @@ const server = http.createServer((req, res) => {
   if (Math.round(cheat.money - beforeCheat) !== 1000) throw new Error('cheat funds nepřidal 1000: ' + (cheat.money - beforeCheat));
   if (!cheat.hud.includes('€')) throw new Error('měna není v eurech: ' + cheat.hud);
 
+  // --- odstranění vedení: klik nástrojem X přímo na linku (přesná trefa) + vratka ---
+  await page.evaluate(() => {
+    const { sim, map, renderer } = EG.game;
+    sim.money = 100000;
+    let s1 = null, s2 = null;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (!sim.canPlace('sub', x, y).ok) continue;
+      if (!s1) { s1 = sim.place('sub', x, y); continue; }
+      const d = Math.hypot(x - s1.x, y - s1.y);
+      if (d >= 3 && d <= 4.5) { s2 = sim.place('sub', x, y); break outer; }
+    }
+    window.__delTest = { s1, s2, line: sim.connect(s1, s2, 0.4), nBefore: sim.lines.length, moneyBefore: sim.money };
+    // kamera na střed spojnice
+    const [wx, wy] = renderer.tileToWorld((s1.x + s2.x) / 2, (s1.y + s2.y) / 2);
+    renderer.cam.x = wx; renderer.cam.y = wy; renderer.cam.zoom = 1.6;
+    document.querySelector('.tool[data-tool="demolish"]').click();
+  });
+  await page.waitForTimeout(250);
+  await page.mouse.click(clickPos.x, clickPos.y); // střed obrazovky = střed linky
+  await page.waitForTimeout(200);
+  const delLine = await page.evaluate(() => {
+    const { sim } = EG.game;
+    const t = window.__delTest;
+    const removed = !sim.lines.includes(t.line);
+    document.querySelector('.tool[data-tool="pan"]').click();
+    return {
+      lineOk: !!t.line, removed,
+      nAfter: sim.lines.length, nBefore: t.nBefore,
+      refund: +(sim.money - t.moneyBefore).toFixed(1),
+    };
+  });
+  console.log('odstranění vedení:', JSON.stringify(delLine));
+  if (!delLine.lineOk) throw new Error('testovací vedení se nepostavilo');
+  if (!delLine.removed || delLine.nAfter !== delLine.nBefore - 1) throw new Error('klik nástrojem X vedení neodstranil');
+  if (!(delLine.refund > 0)) throw new Error('za odstraněné vedení není vratka: ' + delLine.refund);
+
   // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 7 úrovní,
   //     různé max. délky přímo v popiscích ---
   const linebar = await page.evaluate(() => {

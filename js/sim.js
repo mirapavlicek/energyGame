@@ -415,14 +415,19 @@
   };
 
   Sim.prototype.removeLine = function (line) {
+    const LT = LINE_TYPES[line.level];
+    // vratka 40 % ceny odpojovaného systému (další systémy stály 70 %)
+    const paid = Math.ceil(line.len * LT.cost * ((line.n || 1) > 1 ? 0.7 : 1));
+    const refund = Math.floor(paid * 0.4);
+    this.money += refund;
     if ((line.n || 1) > 1) {
       line.n--;
-      line.cap = LINE_TYPES[line.level].cap * line.n;
-      this.msg('Odpojen jeden systém vedení (zbývá ' + line.n + '×)');
+      line.cap = LT.cap * line.n;
+      this.msg('Odpojen jeden systém vedení (+' + refund + ', zbývá ' + line.n + '×)');
       return;
     }
     this.lines = this.lines.filter((l) => l !== line);
-    this.msg('Vedení odstraněno');
+    this.msg(LT.name + ' odstraněno (+' + refund + ')');
   };
 
   /* ---------- správa budov (servis, smlouva, vylepšení) ---------- */
