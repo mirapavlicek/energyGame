@@ -423,6 +423,12 @@
       s += ' ' + b.out.toFixed(0) + '/' + b.gen.toFixed(0) + ' MW';
       s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round(b.cond * 100) + ' %';
     }
+    const ind = (map.industries || []).find((o) => Math.abs(o.x - gx) <= 1 && Math.abs(o.y - gy) <= 1);
+    if (ind) {
+      const ia = (sim.indAssign || []).find((a) => a.ind === ind);
+      s += ' · ' + ind.name + ' (průmysl, potřeba ' + (ia ? ia.demand.toFixed(0) : ind.demand.toFixed(0)) +
+        ' MW z VN, napájení ' + Math.round((ind.powered || 0) * 100) + ' %, platí +40 %)';
+    }
     const city = map.cities.find((c) => Math.abs(c.x - gx) <= 2 && Math.abs(c.y - gy) <= 2);
     if (city) {
       const kindName = { res: 'obytné', ind: 'průmyslové', mix: 'smíšené' }[city.kind] || '';
@@ -480,6 +486,10 @@
       const b = sim.buildings.find((o) => o.id === l.b);
       if (!a || !b) continue;
       g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    }
+    for (const ind of map.industries || []) {
+      g.fillStyle = (ind.powered || 0) > 0.9 ? '#c77dff' : '#ff5340';
+      g.fillRect(ind.x - 1.5, ind.y - 1.5, 4, 4);
     }
     for (const b of sim.buildings) {
       g.fillStyle = b.kind === 'sub' ? '#e8c84a' : '#ffffff';
@@ -552,11 +562,13 @@
       }
       spr.push([c.x, c.y, S.CENTER, c]);
     }
+    for (const ind of map.industries || []) spr.push([ind.x, ind.y, S.FACTORY, null, null, ind]);
     for (const b of sim.buildings) spr.push([b.x, b.y, kindSprite(b.kind), null, b]);
     spr.sort((p, q) => (p[0] + p[1]) - (q[0] + q[1]));
-    for (const [x, y, sId, city, b] of spr) {
+    for (const [x, y, sId, city, b, ind] of spr) {
       let dim = 1;
       if (city && (city.powered || 0) < 0.5 && sim.sun < 0.15) dim = 0.55; // blackout v noci
+      if (ind && (ind.powered || 0) < 0.5) dim = 0.62; // stojící podnik potemní
       let tintR = dim, tintG = dim, tintB = dim;
       if (b && b.kind !== 'sub' && b.gen > 0.5 && b.out < 0.1) { tintG = 0.75; tintB = 0.7; } // odpojená elektrárna
       if (b && b.broken) { tintR = 1; tintG = 0.35; tintB = 0.3; } // porucha
@@ -614,6 +626,11 @@
     for (const b of sim.buildings) {
       if (b.broken && b !== selected) {
         renderer.pushSprite(b.x, b.y, S.BAD, 1, 1, 1, 0.2 + 0.4 * blink);
+      }
+    }
+    for (const ind of map.industries || []) {
+      if ((ind.powered || 0) < 0.9) {
+        renderer.pushSprite(ind.x, ind.y, S.BAD, 1, 1, 1, 0.2 + 0.45 * blink);
       }
     }
   }

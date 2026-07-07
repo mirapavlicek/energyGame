@@ -62,6 +62,12 @@ s trafem 110/22 kV + 22/0,4 kV → město.
 - Napájená a spokojená města **pomalu rostou** – přibývají obyvatelé i domy
   na mapě (čím větší město, tím pomalejší růst); při výpadcích se lidé stěhují
   pryč a zástavba se zmenšuje. Za dodanou energii města platí.
+- **Průmysl je samostatný prvek**: na mapě se generují podniky (důl u kopců,
+  chemička u řeky, pila u lesa, jinde huť) s velkou vlastní spotřebou 8–48 MW.
+  Huť a chemička jedou nepřetržitě, důl a pila na denní směny. Průmysl se
+  **napájí z VN přípojnice** (22 nebo 11 kV) rozvodny v dosahu – rozvodna bez
+  VN trafa ho nenapojí – a platí o **40 % víc** za MWh než města. Podnik bez
+  proudu stojí a hlásí odstávku.
 - Den/noc cyklus ovlivňuje poptávku i výrobu (slunce, vítr).
 
 ### Správa budov
