@@ -26,6 +26,7 @@
   </header>
 
   <nav id="toolbar"></nav>
+  <nav id="linebar" hidden></nav>
 
   <div id="hover-info"></div>
   <div id="log"></div>
@@ -46,14 +47,16 @@
   </div>
 
   <div id="help">
-    <b>Jak hrát:</b> postav elektrárnu (vodní <b>jen na řece</b> – výkon roste s průtokem),
-    u města postav <b>rozvodnu</b> (dosah 6 dlaždic) a vše propoj <b>vedením</b> (nástroj 7,
-    klikáním z budovy na budovu). Přehrada zaplaví údolí, dá velký výkon a posílí průtok
-    po proudu. Hlídej přetížená vedení (červená) a napájej všechna města – rostou a platí.
-    <b>Klikni na elektrárnu či rozvodnu</b> (v režimu prohlížení) a spravuj ji: servis
-    opotřebení, servisní smlouva, modernizace výkonu, u rozvodny větší dosah. Zanedbaná
-    budova ztrácí výkon a může mít poruchu!
-    <br><span class="dim">Myš: táhnutím posun, kolečko zoom · klávesy 1–7 nástroje, Q prohlížení, X bourání, mezerník pauza, +/− rychlost.</span>
+    <b>Jak hrát:</b> postav elektrárnu (vodní <b>jen na řece</b>), u města <b>rozvodnu</b>
+    a spoj je <b>vedením</b> (nástroj 7). Vedení má <b>napěťové úrovně</b> – VVN 800/400/220/110 kV,
+    VN 22/11 kV, NN 400 V – liší se kapacitou, cenou a max. délkou. Každá elektrárna vyrábí
+    na svém napětí (přehrada 400 kV, uhelná 220 kV, vodní 110 kV, solár/vítr 22 kV).
+    <b>Rozvodna potřebuje trafa</b>: kup je kliknutím na rozvodnu – bez trafa má jen NN
+    přípojnici. Města se napájí z NN strany rozvodny (dosah 6 dlaždic).
+    Př.: vodní 110 kV → rozvodna s trafem 110/22 + 22/0,4 → město.
+    <b>Klikni na budovu</b> (v režimu prohlížení) a spravuj ji: servis, servisní smlouva,
+    modernizace, trafa. Zanedbaná budova ztrácí výkon a hrozí porucha!
+    <br><span class="dim">Myš: táhnutím posun, kolečko zoom · klávesy 1–7 nástroje (7 znovu = přepnutí napětí), Q prohlížení, X bourání, mezerník pauza, +/− rychlost.</span>
   </div>
 
   <script src="js/rng.js"></script>

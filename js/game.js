@@ -10,7 +10,19 @@
   let map, sim, renderer;
   let tool = 'pan';            // pan | hydro | dam | coal | solar | wind | sub | line | demolish
   let lineFrom = null;         // budova, odkud táhneme vedení
+  let lineLevel = 110;         // zvolená napěťová úroveň vedení
   let selected = null;         // budova otevřená v panelu správy
+
+  /* barvy vedení podle napěťové úrovně */
+  const LEVEL_COLOR = {
+    800: [0.83, 0.45, 1.00],
+    400: [1.00, 0.72, 0.20],
+    220: [0.35, 0.78, 0.95],
+    110: [0.62, 0.66, 0.72],
+    22:  [0.42, 0.85, 0.45],
+    11:  [0.72, 0.90, 0.45],
+    0.4: [0.95, 0.95, 0.88],
+  };
   let hover = [0, 0];
   let mouse = { x: 0, y: 0, down: false, panning: false, lastX: 0, lastY: 0 };
   let speed = 1;
@@ -47,9 +59,11 @@
 
     setupInput(canvas);
     setupToolbar();
+    setupLinebar();
     setupMinimap();
     $('#bp-close').addEventListener('click', closePanel);
-    sim.msg('Vítej! Postav elektrárnu, rozvodnu u města a spoj je vedením.');
+    sim.msg('Vítej! Postav elektrárnu, u města rozvodnu a kup do ní trafa (klik na rozvodnu).');
+    sim.msg('Pak vše spoj vedením správného napětí – vodní elektrárna vyrábí na 110 kV.');
 
     // ladicí přístup (používá i smoke test)
     EG.game = { get sim() { return sim; }, get map() { return map; }, get renderer() { return renderer; } };
@@ -98,7 +112,13 @@
     window.addEventListener('keydown', (e) => {
       const k = e.key.toLowerCase();
       const byHotkey = Object.entries(EG.BUILD).find(([, v]) => v.hotkey === k);
-      if (byHotkey) setTool(byHotkey[0] === 'line' ? 'line' : byHotkey[0]);
+      if (byHotkey) {
+        if (byHotkey[0] === 'line' && tool === 'line') {
+          // opakovaný stisk 7 cykluje napěťové úrovně
+          const i = EG.LEVELS.indexOf(lineLevel);
+          setLineLevel(EG.LEVELS[(i + 1) % EG.LEVELS.length]);
+        } else setTool(byHotkey[0]);
+      }
       else if (k === 'escape') { if (selected) closePanel(); else setTool('pan'); }
       else if (k === 'q') setTool('pan');
       else if (k === 'x') setTool('demolish');
@@ -126,8 +146,14 @@
     if (tool === 'line') {
       const b = sim.buildingAt(gx, gy);
       if (!b) { sim.msg('Vedení musí začínat i končit na stavbě', 'warn'); return; }
-      if (!lineFrom) { lineFrom = b; sim.msg('Vyber cílovou stavbu'); return; }
-      sim.connect(lineFrom, b);
+      if (!sim.supportsLevel(b, lineLevel)) {
+        const lvls = sim.levelsOf(b).map((lv) => EG.LINE_TYPES[lv].name).join(', ');
+        sim.msg(EG.BUILD[b.kind].name + ' nemá přípojnici ' + EG.LINE_TYPES[lineLevel].name +
+          (lvls ? ' (má: ' + lvls + ')' : ''), 'warn');
+        return;
+      }
+      if (!lineFrom) { lineFrom = b; sim.msg('Vyber cílovou stavbu (' + EG.LINE_TYPES[lineLevel].name + ')'); return; }
+      sim.connect(lineFrom, b, lineLevel);
       lineFrom = b; // řetězení vedení
       return;
     }
@@ -165,7 +191,36 @@
     document.querySelectorAll('.tool').forEach((el) => {
       el.classList.toggle('active', el.dataset.tool === t);
     });
+    $('#linebar').hidden = t !== 'line';
     $('#game').style.cursor = t === 'pan' ? 'grab' : 'crosshair';
+  }
+
+  function setLineLevel(lv) {
+    lineLevel = lv;
+    lineFrom = null;
+    document.querySelectorAll('.linelvl').forEach((el) => {
+      el.classList.toggle('active', +el.dataset.level === lv);
+    });
+    const LT = EG.LINE_TYPES[lv];
+    sim.msg('Vedení: ' + LT.name + ' (kapacita ' + LT.cap + ' MW, max ' + LT.maxLen + ' dl.)');
+  }
+
+  function setupLinebar() {
+    const bar = $('#linebar');
+    for (const lv of EG.LEVELS) {
+      const LT = EG.LINE_TYPES[lv];
+      const el = document.createElement('button');
+      el.className = 'linelvl';
+      el.dataset.level = lv;
+      const [r, g, b] = LEVEL_COLOR[lv];
+      el.innerHTML = '<span class="swatch" style="background:rgb(' +
+        Math.round(r * 255) + ',' + Math.round(g * 255) + ',' + Math.round(b * 255) + ')"></span>' +
+        LT.name + '<span class="cost">' + LT.cap + ' MW · ' + LT.cost + '/dl</span>';
+      el.title = 'Kapacita ' + LT.cap + ' MW, max. délka ' + LT.maxLen + ' dlaždic, cena ' + LT.cost + ' za dlaždici.';
+      el.addEventListener('click', () => setLineLevel(lv));
+      bar.appendChild(el);
+    }
+    document.querySelector('.linelvl[data-level="110"]').classList.add('active');
   }
 
   function setupToolbar() {
@@ -246,10 +301,26 @@
       : 'Nové turbíny/panely/kotle: +25 % výkonu za úroveň a pomalejší opotřebení.';
 
     if (b.kind === 'sub') {
-      const rng = bpButton('📡 Silnější transformátor <span class="cost" id="bp-rng-cost"></span>', '',
+      const rng = bpButton('📡 Větší dosah NN distribuce <span class="cost" id="bp-rng-cost"></span>', '',
         () => sim.upgradeRange(b));
       rng.id = 'bp-btn-rng';
-      rng.title = 'Zvětší dosah rozvodny o 2 dlaždice.';
+      rng.title = 'Zvětší dosah rozvodny k městům o 2 dlaždice.';
+
+      // --- trafa: instalovaná + nákup ---
+      const sec = document.createElement('div');
+      sec.className = 'bp-sec';
+      sec.textContent = 'Trafa';
+      box.appendChild(sec);
+      const list = document.createElement('div');
+      list.id = 'bp-trafo-list';
+      box.appendChild(list);
+      for (const [key, t] of Object.entries(EG.TRAFOS)) {
+        const el = bpButton('➕ ' + t.name + '<span class="cost">' + t.cap + ' MW · −' + t.cost + '</span>', 'trafo-buy',
+          () => sim.buyTrafo(b, key));
+        el.dataset.trafo = key;
+        el.title = 'Převádí ' + EG.LINE_TYPES[t.hi].name + ' ↔ ' + EG.LINE_TYPES[t.lo].name +
+          ', kapacita ' + t.cap + ' MW. Více kusů se sčítá.';
+      }
     }
 
     if (b.kind !== 'dam') {
@@ -268,12 +339,15 @@
 
     let rows = '';
     if (b.kind === 'sub') {
-      rows += 'Dosah: <span class="val">' + sim.subRange(b) + ' dlaždic</span><br>';
+      rows += 'Přípojnice: <span class="val">' +
+        sim.levelsOf(b).map((lv) => EG.LINE_TYPES[lv].name.replace(/^(VVN|VN|NN) /, '')).join(', ') + '</span><br>';
+      rows += 'Dosah NN: <span class="val">' + sim.subRange(b) + ' dlaždic</span><br>';
       rows += 'Odběr přes rozvodnu: <span class="val">' +
         (sim.cityAssign || []).filter((ca) => ca.sub >= 0 && sim.buildings[ca.sub] === b)
           .reduce((s, ca) => s + ca.served, 0).toFixed(0) + ' MW</span><br>';
     } else {
       rows += 'Výkon: <span class="val">' + b.out.toFixed(1) + ' / ' + b.gen.toFixed(1) + ' MW</span><br>';
+      rows += 'Výstupní napětí: <span class="val">' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + '</span><br>';
     }
     rows += 'Úroveň: <span class="val">' + b.level + ' / ' + EG.MAX_LEVEL + '</span>';
     if (b.kind === 'sub') rows += ' · dosah <span class="val">+' + (b.rangeLevel || 0) * 2 + '</span>';
@@ -309,6 +383,28 @@
     }
     const cBtn = $('#bp-btn-contract');
     if (cBtn) cBtn.classList.toggle('on', !!b.contract);
+
+    // trafa: instalované kusy + zatížení, dostupnost nákupu
+    if (b.kind === 'sub') {
+      const list = $('#bp-trafo-list');
+      if (list) {
+        const items = Object.entries(b.trafos || {}).filter(([, c]) => c > 0);
+        list.innerHTML = items.length === 0
+          ? '<div class="bp-trafo-none">Žádné trafo – rozvodna má jen NN (400 V). Bez trafa nepřipojí VN/VVN vedení.</div>'
+          : items.map(([key, count]) => {
+            const t = EG.TRAFOS[key];
+            const load = (b.trafoLoad || {})[key] || 0;
+            const pct = Math.round(load * 100);
+            const cls = load > 1 ? 'bad' : load > 0.75 ? 'warn' : '';
+            return '<div class="bp-trafo-item">' + t.name + ' ×' + count +
+              ' <span class="' + cls + '">' + pct + ' %</span>' +
+              ' <span class="dim">z ' + t.cap * count + ' MW</span></div>';
+          }).join('');
+      }
+      document.querySelectorAll('.trafo-buy').forEach((el) => {
+        el.disabled = sim.money < EG.TRAFOS[el.dataset.trafo].cost;
+      });
+    }
   }
 
   function updateHoverInfo() {
@@ -321,7 +417,9 @@
     if (t === 6) s += ' · průtok ' + map.flow[map.idx(gx, gy)].toFixed(1);
     const b = sim.buildingAt(gx, gy);
     if (b) {
-      s += ' · ' + EG.BUILD[b.kind].name + ' ' + b.out.toFixed(0) + '/' + b.gen.toFixed(0) + ' MW';
+      s += ' · ' + EG.BUILD[b.kind].name;
+      if (b.kind !== 'sub') s += ' (' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + ')';
+      s += ' ' + b.out.toFixed(0) + '/' + b.gen.toFixed(0) + ' MW';
       s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round(b.cond * 100) + ' %';
     }
     const city = map.cities.find((c) => Math.abs(c.x - gx) <= 2 && Math.abs(c.y - gy) <= 2);
@@ -412,19 +510,21 @@
     const id2b = new Map();
     for (const b of sim.buildings) id2b.set(b.id, b);
 
-    // vedení
+    // vedení – barva podle napěťové úrovně, přetížení červeně/oranžově
     for (const l of sim.lines) {
       const a = id2b.get(l.a), b = id2b.get(l.b);
       if (!a || !b) continue;
-      let r = 0.25, g = 0.25, bl = 0.28;
+      const lc = LEVEL_COLOR[l.level] || [0.25, 0.25, 0.28];
+      let r = lc[0] * 0.45, g = lc[1] * 0.45, bl = lc[2] * 0.45;
       if (l.load > 1) { r = 0.95; g = 0.2; bl = 0.15; }
       else if (l.load > 0.75) { r = 0.95; g = 0.6; bl = 0.1; }
       const dir = l.flow > 0.5 ? 1 : (l.flow < -0.5 ? -1 : 0);
       renderer.pushLine(a.x, a.y, b.x, b.y, r, g, bl, 0.95, Math.min(1, l.load), dir);
     }
-    // rozestavěné vedení
+    // rozestavěné vedení – barvou zvolené úrovně
     if (tool === 'line' && lineFrom) {
-      renderer.pushLine(lineFrom.x, lineFrom.y, hover[0], hover[1], 1, 0.9, 0.3, 0.6, 0, 0);
+      const lc = LEVEL_COLOR[lineLevel];
+      renderer.pushLine(lineFrom.x, lineFrom.y, hover[0], hover[1], lc[0], lc[1], lc[2], 0.6, 0, 0);
     }
 
     // města (seřazení podle hloubky řeší pořadí přidání – kreslíme po diagonálách zjednodušeně dle y)

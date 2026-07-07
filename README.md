@@ -17,8 +17,34 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
   větrné turbíny (kolísají s větrem, na kopcích víc).
 - Města napájíš přes **rozvodny** (dosah 6 dlaždic) a vše spojuješ **vedením**.
 - **Toky v síti** se počítají zjednodušeným DC power-flow modelem – energie si
-  sama najde cesty, delší vedení „klade větší odpor". Každé vedení má kapacitu
-  120 MW; přetížené trasy červeně blikají a chtějí paralelní posilu.
+  sama najde cesty, delší vedení „klade větší odpor". Přetížené trasy červeně
+  blikají a chtějí paralelní posilu nebo vyšší napěťovou hladinu.
+
+### Napěťové úrovně a trafa
+
+Vedení existuje v sedmi napěťových úrovních – liší se kapacitou, cenou za
+dlaždici a maximální délkou:
+
+| Úroveň | Kapacita | Cena/dl | Max. délka |
+| --- | --- | --- | --- |
+| VVN 800 kV | 800 MW | 34 | 60 |
+| VVN 400 kV | 400 MW | 20 | 48 |
+| VVN 220 kV | 200 MW | 11 | 36 |
+| VVN 110 kV | 80 MW | 6 | 28 |
+| VN 22 kV | 30 MW | 3 | 14 |
+| VN 11 kV | 14 MW | 2 | 10 |
+| NN 400 V | 5 MW | 1 | 5 |
+
+Každá elektrárna vyrábí na svém výstupním napětí (přehrada 400 kV, uhelná
+220 kV, vodní 110 kV, solár a vítr 22 kV) a vedení k ní musí mít stejnou
+úroveň. **Rozvodna má od výroby jen NN (400 V) přípojnici** – aby připojila
+vyšší napětí, musíš do ní koupit **trafa** (klik na rozvodnu → sekce Trafa).
+Traf je osm typů podle převodu a kapacity (800/400 kV … 11/0,4 kV
+distribuční); více kusů téhož typu sčítá kapacitu a přetížené trafo hlásí
+varování. Města se napájí z NN strany rozvodny.
+
+Typický řetěz: vodní elektrárna (110 kV) → vedení 110 kV → rozvodna
+s trafem 110/22 kV + 22/0,4 kV → město.
 - Napájená města rostou a platí za energii; při výpadcích se lidé stěhují pryč.
 - Den/noc cyklus ovlivňuje poptávku i výrobu (slunce, vítr).
 
@@ -34,8 +60,10 @@ a spravovat v panelu:
   při poruše) za přirážku 20 %.
 - **Modernizace** (3 úrovně) – +25 % výkonu za úroveň a pomalejší opotřebení,
   mírně vyšší provozní náklady.
-- **Silnější transformátor** (jen rozvodna) – dosah +2 dlaždice za úroveň.
-- **Zbourat** – vrátí 40 % ceny (přehradu zbourat nejde).
+- **Trafa** (jen rozvodna) – nákup transformátorů podle typu a kapacity,
+  zobrazuje se jejich aktuální zatížení.
+- **Větší dosah NN distribuce** (jen rozvodna) – +2 dlaždice za úroveň.
+- **Zbourat** – vrátí 40 % ceny včetně traf (přehradu zbourat nejde).
 
 ## Ovládání
 
@@ -43,7 +71,8 @@ a spravovat v panelu:
 | --- | --- |
 | tažení myší | posun kamery |
 | kolečko | zoom ke kurzoru |
-| klik na budovu | panel správy (servis, smlouva, modernizace…) |
+| klik na budovu | panel správy (servis, smlouva, modernizace, trafa…) |
+| `7` opakovaně | přepínání napěťové úrovně vedení |
 | `1`–`6` | stavby (vodní, přehrada, uhelná, solár, vítr, rozvodna) |
 | `7` | vedení – klikej z budovy na budovu (řetězí se) |
 | `Q` / `Esc` | režim prohlížení |

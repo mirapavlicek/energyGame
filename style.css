@@ -63,6 +63,33 @@ html, body {
 }
 .tool .cost { margin-left: auto; font-size: 11px; color: #e8c84a; }
 
+/* ---------- výběr napětí vedení ---------- */
+#linebar[hidden] { display: none; }
+#linebar {
+  position: absolute; left: 228px; top: 54px;
+  display: flex; flex-direction: column; gap: 3px;
+  background: rgba(10, 14, 19, 0.82);
+  border: 1px solid #2c3a48;
+  border-radius: 10px;
+  padding: 8px;
+  backdrop-filter: blur(4px);
+  max-width: 230px;
+}
+.linelvl {
+  display: flex; align-items: center; gap: 7px;
+  background: transparent; border: 1px solid transparent;
+  color: #cdd6de; font-size: 12.5px; text-align: left;
+  padding: 5px 8px; border-radius: 7px; cursor: pointer;
+  white-space: nowrap;
+}
+.linelvl:hover { background: rgba(255, 255, 255, 0.07); }
+.linelvl.active { background: #274a68; border-color: #4a80ab; color: #fff; }
+.linelvl .swatch {
+  width: 12px; height: 12px; border-radius: 3px; flex: none;
+  border: 1px solid rgba(255,255,255,0.25);
+}
+.linelvl .cost { margin-left: auto; font-size: 10.5px; color: #8b98a5; padding-left: 8px; }
+
 /* ---------- info pod kurzorem ---------- */
 #hover-info {
   position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
@@ -98,7 +125,9 @@ html, body {
 /* ---------- panel budovy ---------- */
 #bpanel {
   position: absolute; right: 10px; bottom: 220px;
-  width: 260px;
+  width: 280px;
+  max-height: calc(100vh - 290px);
+  overflow-y: auto;
   background: rgba(10, 14, 19, 0.92);
   border: 1px solid #3c4c5c; border-radius: 10px;
   padding: 10px 12px;
@@ -136,6 +165,17 @@ html, body {
 .bp-btn.on { background: #274a68; border-color: #4a80ab; }
 .bp-btn.danger { border-color: #7e4a42; }
 .bp-btn.danger:hover:not(:disabled) { background: #5c3833; }
+.bp-sec {
+  margin-top: 6px; padding-top: 6px;
+  border-top: 1px solid #2c3a48;
+  font-weight: 600; font-size: 12.5px; color: #9fb2c2;
+}
+.bp-btn.trafo-buy { padding: 4px 10px; font-size: 12px; }
+#bp-trafo-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 3px; }
+.bp-trafo-item { font-size: 12px; color: #cdd6de; font-variant-numeric: tabular-nums; }
+.bp-trafo-item .warn { color: #f0c040; }
+.bp-trafo-item .bad { color: #ff6a5a; font-weight: 600; }
+.bp-trafo-none { font-size: 11.5px; color: #8b98a5; line-height: 1.4; }
 
 /* ---------- nápověda ---------- */
 #help {

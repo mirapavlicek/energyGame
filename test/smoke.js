@@ -76,13 +76,15 @@ const server = http.createServer((req, res) => {
       if (map.type[map.idx(x, y)] === EG.T.GRASS) { gx = x; gy = y; break outer2; }
     }
     const hydroOnGrass = sim.canPlace('hydro', gx, gy);
-    // rozvodna u prvního města
+    // rozvodna u prvního města – potřebuje trafa 110/22 a 22/0,4 (vodní vyrábí na 110 kV)
     const c = map.cities[0];
     let sub = null;
     for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
       if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
     }
-    // řetěz rozvoden od elektrárny k městu (vedení max 24 dlaždic)
+    sim.buyTrafo(sub, 't110_22');
+    sim.buyTrafo(sub, 't22_04');
+    // řetěz rozvoden od elektrárny k městu (110kV vedení max 28 dlaždic, průchozí suby potřebují 110kV přípojnici)
     const hops = [hydro];
     let cur = hydro;
     while (Math.hypot(cur.x - sub.x, cur.y - sub.y) > 24) {
@@ -97,12 +99,13 @@ const server = http.createServer((req, res) => {
         }
       }
       if (!placed) return { fail: 'nelze umístit mezilehlou rozvodnu' };
+      sim.buyTrafo(placed, 't110_22');
       hops.push(placed);
       cur = placed;
     }
     hops.push(sub);
     const lines = [];
-    for (let i = 0; i < hops.length - 1; i++) lines.push(sim.connect(hops[i], hops[i + 1]));
+    for (let i = 0; i < hops.length - 1; i++) lines.push(sim.connect(hops[i], hops[i + 1], 110));
     // simuluj 30 s
     for (let i = 0; i < 300; i++) sim.tick(0.1);
     // přehrada test: postavit na řece pod elektrárnou
@@ -119,6 +122,8 @@ const server = http.createServer((req, res) => {
       subPlaced: !!sub,
       linesOk: lines.every((l) => !!l),
       nLines: lines.length,
+      lineLevel: lines[0] && lines[0].level,
+      lineCap: lines[0] && lines[0].cap,
       delivered: +sim.stats.delivered.toFixed(1),
       demand: +sim.stats.demand.toFixed(1),
       cityPowered: +(map.cities[0].powered || 0).toFixed(2),
@@ -133,6 +138,7 @@ const server = http.createServer((req, res) => {
   if (result.fail) throw new Error(result.fail);
   if (!result.hydroPlaced || !result.hydroOnGrassRejected) throw new Error('pravidla umístění vodní elektrárny selhala');
   if (!result.linesOk) throw new Error('vedení se nepodařilo natáhnout');
+  if (result.lineLevel !== 110 || result.lineCap !== 80) throw new Error('vedení nemá úroveň 110 kV / kapacitu 80 MW');
   if (!(result.cityPowered > 0.9)) throw new Error('město není napájené: ' + result.cityPowered);
   if (!result.damPlaced || !(result.damGen > 0)) throw new Error('přehrada nefunguje');
 
@@ -152,6 +158,9 @@ const server = http.createServer((req, res) => {
     for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
       if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
     }
+    sim.buyTrafo(sub, 't220_110');
+    sim.buyTrafo(sub, 't110_22');
+    sim.buyTrafo(sub, 't22_04');
     sim.tick(0.1);
 
     // opotřebení snižuje výkon
@@ -205,6 +214,24 @@ const server = http.createServer((req, res) => {
     for (let i = 0; i < 200; i++) sim.tick(0.1);
     const wearWorks = hydro.cond < condBefore;
 
+    // --- napěťové úrovně a trafa ---
+    // prázdná rozvodna má jen NN (400 V) a bez trafa nepřipojí 110 kV
+    let ex = -1, ey = -1;
+    outerE:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      const d = Math.hypot(x - hydro.x, y - hydro.y);
+      if (d > 32 && d < 45 && sim.canPlace('sub', x, y).ok) { ex = x; ey = y; break outerE; }
+    }
+    const empty = sim.place('sub', ex, ey);
+    const levelsEmpty = sim.levelsOf(empty).join(',');
+    const noCommon = sim.connect(hydro, empty);        // žádná společná úroveň
+    sim.buyTrafo(empty, 't110_22');
+    const supports110 = sim.supportsLevel(empty, 110); // s trafem už 110 kV umí
+    const wrongLevel = sim.connect(hydro, empty, 22);  // vodní vyrábí na 110, ne 22
+    const tooFar = sim.connect(hydro, empty, 110);     // 110 kV má max 28 dlaždic
+    // tok přes trafo se měří
+    const trafoLoad110 = (sub.trafoLoad || {}).t110_22 || 0;
+
     return {
       genFresh: +genFresh.toFixed(1), genWorn: +genWorn.toFixed(1),
       wornIsLess: genWorn < genFresh * 0.7,
@@ -216,6 +243,9 @@ const server = http.createServer((req, res) => {
       poweredOk, poweredBroken: +poweredBroken.toFixed(2),
       contractFixed, poweredAgain: +poweredAgain.toFixed(2),
       wearWorks,
+      levelsEmpty, noCommonNull: noCommon === null, supports110,
+      wrongLevelNull: wrongLevel === null, tooFarNull: tooFar === null,
+      trafoLoad110: +trafoLoad110.toFixed(2),
     };
   });
   console.log('správa budov:', JSON.stringify(mgmt, null, 1));
@@ -227,6 +257,12 @@ const server = http.createServer((req, res) => {
   if (!(mgmt.poweredBroken < 0.1)) throw new Error('porouchaná rozvodna stále napájí město');
   if (!mgmt.contractFixed || !(mgmt.poweredAgain > 0.9)) throw new Error('servisní smlouva nefunguje');
   if (!mgmt.wearWorks) throw new Error('opotřebení v ticku neběží');
+  if (mgmt.levelsEmpty !== '0.4') throw new Error('prázdná rozvodna má mít jen NN, má: ' + mgmt.levelsEmpty);
+  if (!mgmt.noCommonNull) throw new Error('spojení bez společné úrovně prošlo');
+  if (!mgmt.supports110) throw new Error('trafo 110/22 nepřidalo 110kV přípojnici');
+  if (!mgmt.wrongLevelNull) throw new Error('vedení 22 kV k vodní elektrárně (110 kV) prošlo');
+  if (!mgmt.tooFarNull) throw new Error('110kV vedení delší než 28 dlaždic prošlo');
+  if (!(mgmt.trafoLoad110 > 0)) throw new Error('tok přes trafo se neměří');
 
   // --- panel správy v živé hře: klik na budovu jako hráč ---
   const panel = await page.evaluate(() => {
@@ -272,7 +308,58 @@ const server = http.createServer((req, res) => {
   if (!panelState.title.includes('Uhelná')) throw new Error('panel ukazuje špatnou budovu: ' + panelState.title);
   if (panelState.condAfterSvc !== 1) throw new Error('servis přes UI nefunguje');
   if (panelState.levelAfterUp !== 2) throw new Error('modernizace přes UI nefunguje');
+
+  // --- panel rozvodny: nákup trafa klikáním v UI ---
+  await page.evaluate(() => {
+    const { sim, map, renderer } = EG.game;
+    let sx = -1, sy = -1;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (sim.canPlace('sub', x, y).ok) { sx = x; sy = y; break outer; }
+    }
+    sim.place('sub', sx, sy);
+    const [wx, wy] = renderer.tileToWorld(sx, sy);
+    renderer.cam.x = wx; renderer.cam.y = wy;
+  });
+  await page.waitForTimeout(250);
+  await page.mouse.click(clickPos.x, clickPos.y);
+  await page.waitForTimeout(250);
+  const subPanel = await page.evaluate(() => {
+    const sim = EG.game.sim;
+    const sub = sim.buildings[sim.buildings.length - 1];
+    const visible = !document.querySelector('#bpanel').hidden;
+    const title = document.querySelector('#bp-title').textContent;
+    const nBuyBtns = document.querySelectorAll('.trafo-buy').length;
+    const buyBtn = document.querySelector('.trafo-buy[data-trafo="t110_22"]');
+    if (buyBtn && !buyBtn.disabled) buyBtn.click();
+    return {
+      visible, title, nBuyBtns,
+      bought: (sub.trafos || {}).t110_22 || 0,
+      levels: sim.levelsOf(sub).join(','),
+    };
+  });
+  console.log('panel rozvodny:', JSON.stringify(subPanel));
+  if (!subPanel.visible || !subPanel.title.includes('Rozvodna')) throw new Error('panel rozvodny se neotevřel: ' + subPanel.title);
+  if (subPanel.nBuyBtns !== 8) throw new Error('má být 8 typů traf, je ' + subPanel.nBuyBtns);
+  if (subPanel.bought !== 1) throw new Error('nákup trafa přes UI nefunguje');
+  if (!subPanel.levels.includes('110')) throw new Error('trafo nepřidalo 110kV přípojnici: ' + subPanel.levels);
   await page.screenshot({ path: '/tmp/eg_panel.png' });
+
+  // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 7 úrovní ---
+  const linebar = await page.evaluate(() => {
+    const disp = () => getComputedStyle(document.querySelector('#linebar')).display;
+    const hiddenInPan = disp() === 'none';
+    document.querySelector('.tool[data-tool="line"]').click();
+    const visibleInLine = disp() !== 'none';
+    const nLevels = document.querySelectorAll('.linelvl').length;
+    document.querySelector('.linelvl[data-level="400"]').click();
+    document.querySelector('.tool[data-tool="pan"]').click();
+    const hiddenAgain = disp() === 'none';
+    return { hiddenInPan, visibleInLine, nLevels, hiddenAgain };
+  });
+  console.log('paleta napětí:', JSON.stringify(linebar));
+  if (!linebar.hiddenInPan || !linebar.visibleInLine || !linebar.hiddenAgain) throw new Error('paleta napětí se špatně schovává/ukazuje');
+  if (linebar.nLevels !== 7) throw new Error('má být 7 napěťových úrovní, je ' + linebar.nLevels);
 
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {
@@ -297,7 +384,9 @@ const server = http.createServer((req, res) => {
     for (let r = 2; r <= 5 && !sub; r++)
       for (let dy = -r; dy <= r && !sub; dy++) for (let dx = -r; dx <= r; dx++)
         if (sim.canPlace('sub', city.x + dx, city.y + dy).ok) { sub = sim.place('sub', city.x + dx, city.y + dy); break; }
-    sim.connect(hydro, sub);
+    sim.buyTrafo(sub, 't110_22');
+    sim.buyTrafo(sub, 't22_04');
+    sim.connect(hydro, sub, 110);
     for (let i = 0; i < 100; i++) sim.tick(0.05);
     const [wx, wy] = renderer.tileToWorld((hydro.x + sub.x) / 2, (hydro.y + sub.y) / 2);
     renderer.cam.x = wx; renderer.cam.y = wy; renderer.cam.zoom = 1.4;

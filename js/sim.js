@@ -39,14 +39,43 @@
       hotkey: '6',
     },
     line: {
-      name: 'Vedení', cost: 6, upkeep: 0.06,
-      desc: 'Spojuje stavby. Cena za dlaždici délky. Kapacita 120 MW.',
+      name: 'Vedení', cost: 0, upkeep: 0,
+      desc: 'Spojuje stavby. Vyber napěťovou úroveň – liší se kapacitou, cenou i max. délkou.',
       hotkey: '7',
     },
   };
 
-  const LINE_CAP = 120;       // MW na jedno vedení
-  const SUB_RANGE = 6;        // dosah rozvodny k městu
+  /* Napěťové úrovně vedení: VVN (800/400/220/110 kV), VN (22/11 kV), NN (400 V).
+     Vyšší napětí = větší kapacita a delší trasy, ale dražší dlaždice. */
+  const LEVELS = [800, 400, 220, 110, 22, 11, 0.4];
+  const LINE_TYPES = {
+    800: { name: 'VVN 800 kV', cls: 'VVN', cap: 800, cost: 34, maxLen: 60 },
+    400: { name: 'VVN 400 kV', cls: 'VVN', cap: 400, cost: 20, maxLen: 48 },
+    220: { name: 'VVN 220 kV', cls: 'VVN', cap: 200, cost: 11, maxLen: 36 },
+    110: { name: 'VVN 110 kV', cls: 'VVN', cap: 80,  cost: 6,  maxLen: 28 },
+    22:  { name: 'VN 22 kV',   cls: 'VN',  cap: 30,  cost: 3,  maxLen: 14 },
+    11:  { name: 'VN 11 kV',   cls: 'VN',  cap: 14,  cost: 2,  maxLen: 10 },
+    0.4: { name: 'NN 400 V',   cls: 'NN',  cap: 5,   cost: 1,  maxLen: 5 },
+  };
+
+  /* výstupní napětí elektráren – vedení k nim musí mít stejnou úroveň */
+  const GEN_LEVEL = { dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22 };
+
+  /* Trafa do rozvoden: převádí mezi dvěma úrovněmi, mají kapacitu a cenu.
+     Rozvodna bez příslušného trafa danou úroveň vůbec nepřipojí.
+     Města se napájí z NN (400 V) strany – tu má každá rozvodna. */
+  const TRAFOS = {
+    t800_400: { hi: 800, lo: 400, cap: 600, cost: 700, name: '800/400 kV' },
+    t400_220: { hi: 400, lo: 220, cap: 350, cost: 420, name: '400/220 kV' },
+    t400_110: { hi: 400, lo: 110, cap: 250, cost: 380, name: '400/110 kV' },
+    t220_110: { hi: 220, lo: 110, cap: 180, cost: 260, name: '220/110 kV' },
+    t110_22:  { hi: 110, lo: 22,  cap: 60,  cost: 120, name: '110/22 kV' },
+    t22_11:   { hi: 22,  lo: 11,  cap: 25,  cost: 45,  name: '22/11 kV' },
+    t22_04:   { hi: 22,  lo: 0.4, cap: 30,  cost: 60,  name: '22/0,4 kV (distribuční)' },
+    t11_04:   { hi: 11,  lo: 0.4, cap: 12,  cost: 30,  name: '11/0,4 kV (distribuční)' },
+  };
+
+  const SUB_RANGE = 6;        // dosah rozvodny k městu (NN distribuce)
   const PRICE_PER_MWH = 0.055; // příjem za dodanou MW za sekundu hry
 
   const MAX_LEVEL = 3;        // max. úroveň modernizace
@@ -123,6 +152,10 @@
       broken: false,     // porucha – mimo provoz do servisu
       contract: false,   // servisní smlouva (automatická údržba za přirážku)
     };
+    if (kind === 'sub') {
+      b.trafos = {};     // klíč z TRAFOS -> počet kusů
+      b.trafoLoad = {};  // klíč -> aktuální zatížení 0..1+
+    }
     this.buildings.push(b);
     if (kind === 'dam') this._applyDam(b);
     this.msg(BUILD[kind].name + ' postavena (−' + cost + ')');
@@ -183,24 +216,70 @@
     if (b.kind === 'dam') { this.msg('Přehradu nelze zbourat (nádrž je napuštěná)', 'warn'); return false; }
     this.buildings = this.buildings.filter((o) => o !== b);
     this.lines = this.lines.filter((l) => l.a !== b.id && l.b !== b.id);
-    this.money += Math.floor(BUILD[b.kind].cost * 0.4);
-    this.msg(BUILD[b.kind].name + ' zbourána (+' + Math.floor(BUILD[b.kind].cost * 0.4) + ')');
+    let refund = BUILD[b.kind].cost;
+    for (const [key, count] of Object.entries(b.trafos || {})) refund += TRAFOS[key].cost * count;
+    refund = Math.floor(refund * 0.4);
+    this.money += refund;
+    this.msg(BUILD[b.kind].name + ' zbourána (+' + refund + ')');
     return true;
   };
 
-  Sim.prototype.connect = function (b1, b2) {
+  /* ---------- napěťové úrovně a trafa ---------- */
+
+  /* úrovně, na které se dá u stavby připojit vedení */
+  Sim.prototype.levelsOf = function (b) {
+    if (b.kind !== 'sub') return [GEN_LEVEL[b.kind]];
+    const set = new Set([0.4]); // NN přípojnici má každá rozvodna
+    for (const key of Object.keys(b.trafos || {})) {
+      if (b.trafos[key] > 0) { set.add(TRAFOS[key].hi); set.add(TRAFOS[key].lo); }
+    }
+    return LEVELS.filter((lv) => set.has(lv));
+  };
+
+  Sim.prototype.supportsLevel = function (b, lv) {
+    return this.levelsOf(b).includes(lv);
+  };
+
+  Sim.prototype.buyTrafo = function (b, key) {
+    if (b.kind !== 'sub') { this.msg('Trafo lze koupit jen do rozvodny', 'warn'); return false; }
+    const t = TRAFOS[key];
+    if (!t) return false;
+    if (this.money < t.cost) { this.msg('Nedostatek peněz na trafo', 'warn'); return false; }
+    this.money -= t.cost;
+    b.trafos[key] = (b.trafos[key] || 0) + 1;
+    this.msg('Trafo ' + t.name + ' instalováno (−' + t.cost + ')');
+    return true;
+  };
+
+  /* level = napěťová úroveň (klíč LINE_TYPES); bez udání se vybere
+     nejvyšší úroveň, kterou podporují obě stavby */
+  Sim.prototype.connect = function (b1, b2, level) {
     if (b1 === b2) return null;
-    if (this.lines.some((l) => (l.a === b1.id && l.b === b2.id) || (l.a === b2.id && l.b === b1.id))) {
-      this.msg('Už propojeno', 'warn'); return null;
+    if (level === undefined) {
+      level = LEVELS.find((lv) => this.supportsLevel(b1, lv) && this.supportsLevel(b2, lv));
+      if (level === undefined) { this.msg('Stavby nemají společnou napěťovou úroveň (chybí trafo?)', 'warn'); return null; }
+    }
+    const LT = LINE_TYPES[level];
+    if (!LT) return null;
+    for (const b of [b1, b2]) {
+      if (!this.supportsLevel(b, level)) {
+        this.msg(BUILD[b.kind].name + ' nemá přípojnici ' + LT.name +
+          (b.kind === 'sub' ? ' – kup příslušné trafo' : ' (vyrábí na ' + LINE_TYPES[GEN_LEVEL[b.kind]].name + ')'), 'warn');
+        return null;
+      }
+    }
+    if (this.lines.some((l) => l.level === level &&
+        ((l.a === b1.id && l.b === b2.id) || (l.a === b2.id && l.b === b1.id)))) {
+      this.msg('Už propojeno (' + LT.name + ')', 'warn'); return null;
     }
     const dist = Math.hypot(b1.x - b2.x, b1.y - b2.y);
-    if (dist > 24) { this.msg('Příliš daleko (max 24 dlaždic)', 'warn'); return null; }
-    const cost = Math.ceil(dist * BUILD.line.cost);
+    if (dist > LT.maxLen) { this.msg(LT.name + ': příliš daleko (max ' + LT.maxLen + ' dlaždic)', 'warn'); return null; }
+    const cost = Math.ceil(dist * LT.cost);
     if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
     this.money -= cost;
-    const l = { id: this.nextId++, a: b1.id, b: b2.id, flow: 0, load: 0, len: dist };
+    const l = { id: this.nextId++, a: b1.id, b: b2.id, level, cap: LT.cap, flow: 0, load: 0, len: dist };
     this.lines.push(l);
-    this.msg('Vedení nataženo (−' + cost + ')');
+    this.msg(LT.name + ' nataženo (−' + cost + ')');
     return l;
   };
 
@@ -316,21 +395,54 @@
     const wind = 0.35 + 0.65 * EG.rng.fbm(this.time * 0.01 + this._noiseT, 3.7, 42, 3);
     this.sun = sun; this.wind = wind; this.dayPhase = dayPhase;
 
-    // --- sestavit uzly ---
+    // --- sestavit přípojnice: bus = (stavba, napěťová úroveň) ---
+    // Elektrárna má jednu přípojnici (výstupní napětí). Rozvodna má NN
+    // a úrovně svých traf; trafa jsou hrany mezi přípojnicemi téže rozvodny.
     const nodes = this.buildings;
     const id2i = new Map();
     nodes.forEach((b, i) => id2i.set(b.id, i));
     const n = nodes.length;
-    const inj = new Float64Array(n);   // MW injekce (+výroba / −spotřeba)
-    const gen = new Float64Array(n);
     const wantGen = new Float64Array(n);
-
     for (let i = 0; i < n; i++) {
       wantGen[i] = this._genOf(nodes[i], sun, wind);
       nodes[i].gen = wantGen[i];
     }
 
-    // města -> nejbližší funkční rozvodna v dosahu (dosah roste s vylepšením)
+    const buses = [];        // {bi: index stavby, lv: úroveň}
+    const busOf = new Map(); // "bi:lv" -> index busu
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      if (b.kind === 'sub' && b.broken) continue; // porouchaná rozvodna je celá odpojená
+      for (const lv of this.levelsOf(b)) {
+        busOf.set(i + ':' + lv, buses.length);
+        buses.push({ bi: i, lv });
+      }
+    }
+    const nb = buses.length;
+
+    // hrany: vedení (na své úrovni) + trafa (mezi úrovněmi rozvodny)
+    const edges = [];
+    for (const l of this.lines) {
+      const ai = id2i.get(l.a), bi = id2i.get(l.b);
+      const a = ai === undefined ? undefined : busOf.get(ai + ':' + l.level);
+      const b = bi === undefined ? undefined : busOf.get(bi + ':' + l.level);
+      l.flow = 0; l.load = 0;
+      if (a === undefined || b === undefined) continue;
+      edges.push({ a, b, w: 1 / Math.max(1, l.len * 0.25), line: l }); // delší vedení = větší „odpor"
+    }
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      if (b.kind !== 'sub' || b.broken) continue;
+      b.trafoLoad = {};
+      for (const [key, count] of Object.entries(b.trafos)) {
+        if (!count) continue;
+        const t = TRAFOS[key];
+        const a = busOf.get(i + ':' + t.hi), bb = busOf.get(i + ':' + t.lo);
+        edges.push({ a, b: bb, w: 2, trafo: { sub: b, key, cap: t.cap * count } });
+      }
+    }
+
+    // města -> nejbližší funkční rozvodna v dosahu (NN distribuce)
     const subs = nodes.map((b, i) => (b.kind === 'sub' && !b.broken ? i : -1)).filter((i) => i >= 0);
     const cityAssign = [];
     let totalDemand = 0;
@@ -346,17 +458,15 @@
       cityAssign.push({ city: c, sub: best, demand: d, served: 0 });
     }
 
-    // --- komponenty souvislosti přes vedení ---
-    const adj = Array.from({ length: n }, () => []);
-    for (const l of this.lines) {
-      const a = id2i.get(l.a), b = id2i.get(l.b);
-      if (a === undefined || b === undefined) continue;
-      adj[a].push({ to: b, line: l, sign: 1 });
-      adj[b].push({ to: a, line: l, sign: -1 });
+    // --- komponenty souvislosti přes hrany (vedení + trafa) ---
+    const adj = Array.from({ length: nb }, () => []);
+    for (const e of edges) {
+      adj[e.a].push({ to: e.b, e });
+      adj[e.b].push({ to: e.a, e });
     }
-    const comp = new Int32Array(n).fill(-1);
+    const comp = new Int32Array(nb).fill(-1);
     let nc = 0;
-    for (let i = 0; i < n; i++) {
+    for (let i = 0; i < nb; i++) {
       if (comp[i] >= 0) continue;
       const stack = [i]; comp[i] = nc;
       while (stack.length) {
@@ -366,84 +476,103 @@
       nc++;
     }
 
+    // bus elektrárny a NN bus rozvodny
+    const genBus = new Int32Array(n).fill(-1);
+    const nnBus = new Int32Array(n).fill(-1);
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      if (b.kind === 'sub') { const v = busOf.get(i + ':0.4'); if (v !== undefined) nnBus[i] = v; }
+      else { const v = busOf.get(i + ':' + GEN_LEVEL[b.kind]); if (v !== undefined) genBus[i] = v; }
+    }
+
     // --- na komponentu: nabídka vs. poptávka ---
     const compGen = new Float64Array(nc);
     const compDem = new Float64Array(nc);
-    for (let i = 0; i < n; i++) compGen[comp[i]] += wantGen[i];
+    for (let i = 0; i < n; i++) if (genBus[i] >= 0) compGen[comp[genBus[i]]] += wantGen[i];
     for (const ca of cityAssign) {
-      if (ca.sub >= 0) compDem[comp[ca.sub]] += ca.demand;
+      if (ca.sub >= 0 && nnBus[ca.sub] >= 0) compDem[comp[nnBus[ca.sub]]] += ca.demand;
     }
 
     let produced = 0, delivered = 0;
-    const demandAt = new Float64Array(n);
+    const gen = new Float64Array(n);
+    const demandAt = new Float64Array(n); // odběr přes rozvodnu (index stavby)
+    const inj = new Float64Array(nb);     // MW injekce na busu
     for (const ca of cityAssign) {
-      if (ca.sub < 0) continue;
-      const c = comp[ca.sub];
+      if (ca.sub < 0 || nnBus[ca.sub] < 0) continue;
+      const c = comp[nnBus[ca.sub]];
       const ratio = compDem[c] > 0 ? Math.min(1, compGen[c] / compDem[c]) : 0;
       ca.served = ca.demand * ratio;
       demandAt[ca.sub] += ca.served;
+      inj[nnBus[ca.sub]] -= ca.served;
       delivered += ca.served;
     }
     for (let i = 0; i < n; i++) {
-      const c = comp[i];
+      if (genBus[i] < 0) { nodes[i].out = 0; continue; }
+      const c = comp[genBus[i]];
       // elektrárny jedou jen tak, kolik je odběr (přebytek se zahodí)
       const useRatio = compGen[c] > 0 ? Math.min(1, compDem[c] / compGen[c]) : 0;
       gen[i] = wantGen[i] * useRatio;
       produced += gen[i];
-      inj[i] = gen[i] - demandAt[i];
+      inj[genBus[i]] += gen[i];
       nodes[i].out = gen[i];
     }
 
     // --- DC power flow: L·θ = P, sdružené gradienty (CG) ---
     // Injekce jsou v každé komponentě bilancované, takže je systém řešitelný;
     // CG na Laplacián konverguje řádově rychleji než Gauss–Seidel.
-    const theta = this._theta && this._theta.length === n ? this._theta : new Float64Array(n);
+    const theta = this._theta && this._theta.length === nb ? this._theta : new Float64Array(nb);
     this._theta = theta;
-    const lineW = (l) => 1 / Math.max(1, l.len * 0.25); // delší vedení = větší „odpor"
     const applyL = (v, out) => {
-      for (let u = 0; u < n; u++) {
+      for (let u = 0; u < nb; u++) {
         let s = 0;
-        for (const e of adj[u]) s += lineW(e.line) * (v[u] - v[e.to]);
+        for (const e of adj[u]) s += e.e.w * (v[u] - v[e.to]);
         out[u] = s;
       }
     };
     {
-      const r = new Float64Array(n), p = new Float64Array(n), Ap = new Float64Array(n);
+      const r = new Float64Array(nb), p = new Float64Array(nb), Ap = new Float64Array(nb);
       applyL(theta, Ap);
-      for (let u = 0; u < n; u++) { r[u] = inj[u] - Ap[u]; p[u] = r[u]; }
+      for (let u = 0; u < nb; u++) { r[u] = inj[u] - Ap[u]; p[u] = r[u]; }
       let rs = 0;
-      for (let u = 0; u < n; u++) rs += r[u] * r[u];
-      const maxIt = Math.min(400, 2 * n + 20);
+      for (let u = 0; u < nb; u++) rs += r[u] * r[u];
+      const maxIt = Math.min(500, 2 * nb + 20);
       for (let it = 0; it < maxIt && rs > 1e-8; it++) {
         applyL(p, Ap);
         let pAp = 0;
-        for (let u = 0; u < n; u++) pAp += p[u] * Ap[u];
+        for (let u = 0; u < nb; u++) pAp += p[u] * Ap[u];
         if (pAp <= 1e-12) break;
         const alpha = rs / pAp;
         let rs2 = 0;
-        for (let u = 0; u < n; u++) {
+        for (let u = 0; u < nb; u++) {
           theta[u] += alpha * p[u];
           r[u] -= alpha * Ap[u];
           rs2 += r[u] * r[u];
         }
         const beta = rs2 / rs;
         rs = rs2;
-        for (let u = 0; u < n; u++) p[u] = r[u] + beta * p[u];
+        for (let u = 0; u < nb; u++) p[u] = r[u] + beta * p[u];
       }
     }
 
-    // toky hranami + přetížení
-    let overloaded = 0;
-    for (const l of this.lines) {
-      const a = id2i.get(l.a), b = id2i.get(l.b);
-      const w = 1 / Math.max(1, l.len * 0.25);
-      l.flow = (theta[a] - theta[b]) * w;
-      l.load = Math.abs(l.flow) / LINE_CAP;
-      if (l.load > 1) overloaded++;
+    // toky hranami + přetížení vedení a traf
+    let overloaded = 0, overloadedTrafos = 0;
+    for (const e of edges) {
+      const flow = (theta[e.a] - theta[e.b]) * e.w;
+      if (e.line) {
+        e.line.flow = flow;
+        e.line.load = Math.abs(flow) / e.line.cap;
+        if (e.line.load > 1) overloaded++;
+      } else {
+        const load = Math.abs(flow) / e.trafo.cap;
+        e.trafo.sub.trafoLoad[e.trafo.key] = load;
+        if (load > 1) overloadedTrafos++;
+      }
     }
-    if (overloaded > 0 && Math.floor(this.time) % 5 === 0 && this._lastOverloadWarn !== Math.floor(this.time)) {
+    if ((overloaded > 0 || overloadedTrafos > 0) && Math.floor(this.time) % 5 === 0 &&
+        this._lastOverloadWarn !== Math.floor(this.time)) {
       this._lastOverloadWarn = Math.floor(this.time);
-      this.msg('Vedení přetíženo! Postav paralelní trasu.', 'warn');
+      if (overloaded > 0) this.msg('Vedení přetíženo! Postav paralelní trasu nebo vyšší napětí.', 'warn');
+      if (overloadedTrafos > 0) this.msg('Trafo přetíženo! Přikup další kus do rozvodny.', 'warn');
     }
 
     // --- města: spokojenost, růst, výpadky ---
@@ -495,15 +624,18 @@
 
     // --- ekonomika ---
     let upkeep = 0;
-    for (const b of this.buildings) upkeep += BUILD[b.kind].upkeep * (1 + 0.25 * (b.level - 1));
-    for (const l of this.lines) upkeep += l.len * BUILD.line.upkeep;
+    for (const b of this.buildings) {
+      upkeep += BUILD[b.kind].upkeep * (1 + 0.25 * (b.level - 1));
+      for (const [key, count] of Object.entries(b.trafos || {})) upkeep += TRAFOS[key].cost * 0.004 * count;
+    }
+    for (const l of this.lines) upkeep += l.len * LINE_TYPES[l.level].cost * 0.01;
     const income = delivered * PRICE_PER_MWH;
     this.money += (income - upkeep * 0.01) * dt;
     this.score += delivered * dt * 0.01;
 
     this.stats = {
       produced, delivered, demand: totalDemand,
-      overloaded,
+      overloaded, overloadedTrafos,
       unpowered: cityAssign.filter((ca) => (ca.demand > 0 && (ca.served / ca.demand) < 0.5)).length,
       income: income - upkeep * 0.01,
     };
@@ -512,7 +644,10 @@
 
   EG.Sim = Sim;
   EG.BUILD = BUILD;
-  EG.LINE_CAP = LINE_CAP;
+  EG.LEVELS = LEVELS;
+  EG.LINE_TYPES = LINE_TYPES;
+  EG.GEN_LEVEL = GEN_LEVEL;
+  EG.TRAFOS = TRAFOS;
   EG.SUB_RANGE = SUB_RANGE;
   EG.MAX_LEVEL = MAX_LEVEL;
   EG.MAX_RANGE_LEVEL = MAX_RANGE_LEVEL;
