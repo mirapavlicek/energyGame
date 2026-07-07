@@ -580,6 +580,58 @@ const server = http.createServer((req, res) => {
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
+  // --- paralelní systémy vedení: posílení trasy až na 4× ---
+  const multi = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const c = map.cities[0];
+    let sB = null; // NN distribuce u města
+    for (let dy = -3; dy <= 3 && !sB; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sB = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sB, 't22_04');
+    let sA = null; // zdrojová rozvodna do 8 dlaždic (22 kV má max 14)
+    for (let r = 5; r <= 8 && !sA; r++)
+      for (let dy = -r; dy <= r && !sA; dy++) for (let dx = -r; dx <= r; dx++)
+        if (Math.hypot(dx, dy) >= 5 && sim.canPlace('sub', sB.x + dx, sB.y + dy).ok) { sA = sim.place('sub', sB.x + dx, sB.y + dy); break; }
+    sim.buyTrafo(sA, 't220_110'); sim.buyTrafo(sA, 't110_22');
+    let coal = null;
+    for (let r = 1; r <= 6 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sA.x + dx, sA.y + dy).ok) { coal = sim.place('coal', sA.x + dx, sA.y + dy); break; }
+    sim.connect(coal, sA, 220);
+    const link = sim.connect(sA, sB, 22); // kapacita 30 MW
+    // večerní špička – město chce přes 30 MW, jeden systém se přetíží
+    sim.time = 67.5;
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const load1 = link.load;
+    const nLinesBefore = sim.lines.length;
+    const second = sim.connect(sA, sB, 22); // posílení, ne nová linka
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const load2 = link.load;
+    const cap2 = link.cap;
+    sim.connect(sA, sB, 22);
+    sim.connect(sA, sB, 22); // -> 4×
+    const n4 = link.n;
+    const fifth = sim.connect(sA, sB, 22); // nad maximum
+    sim.removeLine(link); // odpojí jeden systém
+    return {
+      load1: +load1.toFixed(2),
+      sameLine: second === link, nLinesSame: sim.lines.length === nLinesBefore,
+      load2: +load2.toFixed(2), cap2,
+      n4, fifthNull: fifth === null,
+      nAfterRemove: link.n, stillExists: sim.lines.includes(link),
+    };
+  });
+  console.log('paralelní systémy:', JSON.stringify(multi));
+  if (!(multi.load1 > 1)) throw new Error('jeden systém se ve špičce nepřetížil (test bezzubý): ' + multi.load1);
+  if (!multi.sameLine || !multi.nLinesSame) throw new Error('posílení vytvořilo novou linku místo systému');
+  if (multi.cap2 !== 60) throw new Error('kapacita 2 systémů není 60 MW: ' + multi.cap2);
+  if (!(multi.load2 < 0.8)) throw new Error('posílení nesnížilo zatížení: ' + multi.load1 + ' -> ' + multi.load2);
+  if (multi.n4 !== 4 || !multi.fifthNull) throw new Error('maximum 4 systémů se nevynucuje');
+  if (multi.nAfterRemove !== 3 || !multi.stillExists) throw new Error('bourání neodpojuje po jednom systému');
+
   // --- trafa obousměrně (zvyšovací provoz) a propojovací pole na prodloužení ---
   const coupler = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);
