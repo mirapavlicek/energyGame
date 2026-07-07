@@ -296,7 +296,7 @@
       for (const [key, count] of Object.entries(b.trafos || {})) {
         if (!count) continue;
         const t = EG.TRAFOS[key];
-        if (t.hi !== lv) continue;
+        if (t.hi !== lv || t.coupler) continue;
         const flow = (b.trafoFlow || {})[key] || 0; // kladné = hi -> lo
         rows.push({
           type: 'trafo', key,
@@ -443,11 +443,26 @@
       });
       box.appendChild(list);
       for (const [key, t] of Object.entries(EG.TRAFOS)) {
+        if (t.coupler) continue;
         const el = bpButton('➕ ' + t.name + '<span class="cost">' + t.cap + ' MW · −' + t.cost + '</span>', 'trafo-buy',
           () => sim.buyTrafo(b, key));
         el.dataset.trafo = key;
-        el.title = 'Převádí ' + EG.LINE_TYPES[t.hi].name + ' ↔ ' + EG.LINE_TYPES[t.lo].name +
-          ', kapacita ' + t.cap + ' MW. Více kusů se sčítá.';
+        el.title = 'Převádí obousměrně ' + EG.LINE_TYPES[t.hi].name + ' ⇄ ' + EG.LINE_TYPES[t.lo].name +
+          ' (i nahoru, např. 220→400), kapacita ' + t.cap + ' MW. Více kusů se sčítá.';
+      }
+
+      // --- propojovací pole: prodloužení trasy na stejné hladině ---
+      const sec2 = document.createElement('div');
+      sec2.className = 'bp-sec';
+      sec2.textContent = 'Propojovací pole (prodloužení)';
+      sec2.title = 'Přidá rozvodně přípojnici dané hladiny bez převodu – trasa jde prodloužit dalším vedením.';
+      box.appendChild(sec2);
+      for (const [key, t] of Object.entries(EG.TRAFOS)) {
+        if (!t.coupler) continue;
+        const el = bpButton('➕ ' + t.name + '<span class="cost">−' + t.cost + '</span>', 'trafo-buy',
+          () => sim.buyTrafo(b, key));
+        el.dataset.trafo = key;
+        el.title = 'Přípojnice ' + EG.LINE_TYPES[t.hi].name + ' bez převodu – na řetězení vedení (prodloužení trasy).';
       }
     }
 
@@ -578,6 +593,10 @@
           ? '<div class="bp-trafo-none">Žádné trafo – rozvodna má jen NN (400 V). Bez trafa nepřipojí VN/VVN vedení.</div>'
           : items.map(([key, count]) => {
             const t = EG.TRAFOS[key];
+            if (t.coupler) {
+              return '<div class="bp-trafo-item">pole ' + t.name + (count > 1 ? ' ×' + count : '') +
+                ' <span class="dim">přípojnice bez převodu</span></div>';
+            }
             const load = (b.trafoLoad || {})[key] || 0;
             const pct = Math.round(load * 100);
             const cls = load > 1 ? 'bad' : load > 0.75 ? 'warn' : '';

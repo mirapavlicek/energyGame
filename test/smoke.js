@@ -541,6 +541,67 @@ const server = http.createServer((req, res) => {
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
+  // --- trafa obousměrně (zvyšovací provoz) a propojovací pole na prodloužení ---
+  const coupler = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const c = map.cities[0];
+    // rozvodna u města: NN distribuce
+    let sB = null;
+    for (let dy = -3; dy <= 3 && !sB; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sB = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sB, 't110_22'); sim.buyTrafo(sB, 't22_04');
+    // zdrojová rozvodna dál: solár (22 kV) se přes trafo 110⇄22 vyvede NAHORU na 110 kV
+    let sA = null;
+    outerA:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      const d = Math.hypot(x - sB.x, y - sB.y);
+      if (d >= 30 && d <= 45 && sim.canPlace('sub', x, y).ok) { sA = sim.place('sub', x, y); break outerA; }
+    }
+    sim.buyTrafo(sA, 't110_22');
+    let solar = null;
+    for (let r = 1; r <= 8 && !solar; r++)
+      for (let dy = -r; dy <= r && !solar; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('solar', sA.x + dx, sA.y + dy).ok) { solar = sim.place('solar', sA.x + dx, sA.y + dy); break; }
+    sim.connect(solar, sA, 22);
+    // trasa sA -> sB je delší než 28 dlaždic -> průchozí stanice s polem 110/110
+    let mid = null;
+    const mx = Math.round((sA.x + sB.x) / 2), my = Math.round((sA.y + sB.y) / 2);
+    for (let r = 0; r <= 8 && !mid; r++)
+      for (let dy = -r; dy <= r && !mid; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('sub', mx + dx, my + dy).ok) { mid = sim.place('sub', mx + dx, my + dy); break; }
+    const couplerBought = sim.buyTrafo(mid, 'c110');
+    const midLevels = sim.levelsOf(mid).join(',');
+    const l1 = sim.connect(sA, mid, 110);
+    const l2 = sim.connect(mid, sB, 110);
+    // poledne, ať solár vyrábí
+    sim.time = 4 * sim.dayLen + (7 / 24) * sim.dayLen; // léto, 13:00
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const upFlow = (sA.trafoFlow || {}).t110_22 || 0; // záporný = teče NAHORU (22 -> 110)
+    const regOnCoupler = sim.buyTrafoReg(mid, 'c110');
+    return {
+      couplerBought, midLevels,
+      linesOk: !!l1 && !!l2,
+      solarOut: +solar.out.toFixed(1),
+      upFlow: +upFlow.toFixed(1),
+      flowGoesUp: upFlow < -1,
+      cityPowered: +(c.powered || 0).toFixed(2),
+      midHasNoConversion: Object.keys(mid.trafoLoad || {}).length === 0,
+      regOnCoupler,
+    };
+  });
+  console.log('obousměrná trafa a pole:', JSON.stringify(coupler));
+  if (!coupler.couplerBought) throw new Error('propojovací pole nejde koupit');
+  if (!coupler.midLevels.includes('110')) throw new Error('pole 110/110 nepřidalo přípojnici: ' + coupler.midLevels);
+  if (!coupler.linesOk) throw new Error('trasa přes průchozí stanici nejde natáhnout');
+  if (!(coupler.solarOut > 5)) throw new Error('solár nevyrábí: ' + coupler.solarOut);
+  if (!coupler.flowGoesUp) throw new Error('trafo nepřevádí nahoru (22→110): ' + coupler.upFlow);
+  if (!(coupler.cityPowered > 0.3)) throw new Error('město nedostává energii přes zvyšovací trafo a pole: ' + coupler.cityPowered);
+  if (!coupler.midHasNoConversion) throw new Error('pole se chová jako převodní trafo');
+  if (coupler.regOnCoupler) throw new Error('na propojovací pole jde koupit regulace');
+
   // --- přeshraniční obchod: smlouvy oběma směry, take-or-pay import, sankce za export ---
   const xtrade = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);
@@ -974,7 +1035,7 @@ const server = http.createServer((req, res) => {
   });
   console.log('panel rozvodny:', JSON.stringify(subPanel));
   if (!subPanel.visible || !subPanel.title.includes('Rozvodna')) throw new Error('panel rozvodny se neotevřel: ' + subPanel.title);
-  if (subPanel.nBuyBtns !== 8) throw new Error('má být 8 typů traf, je ' + subPanel.nBuyBtns);
+  if (subPanel.nBuyBtns !== 14) throw new Error('má být 8 typů traf + 6 propojovacích polí, je ' + subPanel.nBuyBtns);
   if (subPanel.bought !== 1) throw new Error('nákup trafa přes UI nefunguje');
   if (!subPanel.levels.includes('110')) throw new Error('trafo nepřidalo 110kV přípojnici: ' + subPanel.levels);
   await page.waitForTimeout(250);
