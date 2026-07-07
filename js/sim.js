@@ -1014,18 +1014,39 @@
 
     // toky hranami + přetížení vedení a traf
     let overloaded = 0, overloadedTrafos = 0;
-    for (const e of edges) {
-      const flow = (theta[e.a] - theta[e.b]) * e.w;
-      if (e.line) {
-        e.line.flow = flow;
-        e.line.load = Math.abs(flow) / e.line.cap;
-        if (e.line.load > 1) overloaded++;
-      } else {
-        const load = Math.abs(flow) / e.trafo.cap;
-        e.trafo.sub.trafoLoad[e.trafo.key] = load;
-        e.trafo.sub.trafoFlow[e.trafo.key] = flow; // kladný = hi -> lo
-        if (load > 1) overloadedTrafos++;
+    const computeFlows = () => {
+      overloaded = 0; overloadedTrafos = 0;
+      for (const e of edges) {
+        const flow = (theta[e.a] - theta[e.b]) * e.w;
+        if (e.line) {
+          e.line.flow = flow;
+          e.line.load = Math.abs(flow) / e.line.cap;
+          if (e.line.load > 1) overloaded++;
+        } else {
+          const load = Math.abs(flow) / e.trafo.cap;
+          e.trafo.sub.trafoLoad[e.trafo.key] = load;
+          e.trafo.sub.trafoFlow[e.trafo.key] = flow; // kladný = hi -> lo
+          if (load > 1) overloadedTrafos++;
+        }
       }
+    };
+    computeFlows();
+
+    /* --- dispečerské rozložení zátěže: přetížené hraně se zvýší „odpor"
+       a tok se přelije na paralelní trasy s volnou kapacitou. Kde žádná
+       alternativa není (radiální napájení), přetížení zůstane. --- */
+    for (let it = 0; it < 3 && (overloaded > 0 || overloadedTrafos > 0); it++) {
+      let changed = false;
+      for (const e of edges) {
+        const load = e.line ? e.line.load : (e.trafo.sub.trafoLoad[e.trafo.key] || 0);
+        if (load > 1.02) {
+          e.w /= Math.min(4, load * load);
+          changed = true;
+        }
+      }
+      if (!changed) break;
+      solveCG(inj);
+      computeFlows();
     }
     if ((overloaded > 0 || overloadedTrafos > 0) && Math.floor(this.time) % 5 === 0 &&
         this._lastOverloadWarn !== Math.floor(this.time)) {

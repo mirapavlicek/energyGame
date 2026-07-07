@@ -599,6 +599,56 @@ const server = http.createServer((req, res) => {
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
+  // --- napájení ze dvou stran: zátěž se rozloží a nepřetěžuje jednu trasu ---
+  const dispatch = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const c = map.cities[0];
+    c.pop = 55; c.kind = 'res'; c.needPerCap = 1.1; // ~69 MW ve špičce
+    let sD = null; // distribuční rozvodna u města
+    for (let dy = -3; dy <= 3 && !sD; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sD = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sD, 't110_22'); sim.buyTrafo(sD, 't22_04');
+    let sS = null; // zdrojová rozvodna do 10 dlaždic
+    for (let r = 6; r <= 10 && !sS; r++)
+      for (let dy = -r; dy <= r && !sS; dy++) for (let dx = -r; dx <= r; dx++)
+        if (Math.hypot(dx, dy) >= 6 && sim.canPlace('sub', sD.x + dx, sD.y + dy).ok) { sS = sim.place('sub', sD.x + dx, sD.y + dy); break; }
+    sim.buyTrafo(sS, 't220_110'); sim.buyTrafo(sS, 't110_22');
+    let coal = null, coal2 = null;
+    for (let r = 1; r <= 6 && !(coal && coal2); r++)
+      for (let dy = -r; dy <= r && !(coal && coal2); dy++) for (let dx = -r; dx <= r; dx++) {
+        if (!sim.canPlace('coal', sS.x + dx, sS.y + dy).ok) continue;
+        if (!coal) coal = sim.place('coal', sS.x + dx, sS.y + dy);
+        else { coal2 = sim.place('coal', sS.x + dx, sS.y + dy); break; }
+      }
+    sim.connect(coal, sS, 220);
+    sim.connect(coal2, sS, 220);
+    // fáze 1: jen jedna 22kV trasa (radiální) -> nevyhnutelné přetížení
+    const l22 = sim.connect(sS, sD, 22);
+    sim.time = 67.5; // večerní špička
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const loadSingle = l22.load;
+    const poweredSingle = c.powered;
+    // fáze 2: druhá strana napájení po 110 kV -> zátěž se rozloží
+    const l110 = sim.connect(sS, sD, 110);
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    return {
+      demand: +sim.cityAssign.find((a) => a.city === c).demand.toFixed(1),
+      loadSingle: +loadSingle.toFixed(2), poweredSingle: +poweredSingle.toFixed(2),
+      load22: +l22.load.toFixed(2), load110: +l110.load.toFixed(2),
+      mw22: +Math.abs(l22.flow).toFixed(1), mw110: +Math.abs(l110.flow).toFixed(1),
+      powered: +(c.powered || 0).toFixed(2),
+    };
+  });
+  console.log('rozložení zátěže:', JSON.stringify(dispatch));
+  if (!(dispatch.loadSingle > 1.15)) throw new Error('radiální trasa se nepřetížila (test bezzubý): ' + dispatch.loadSingle);
+  if (!(dispatch.load22 <= 1.05)) throw new Error('po napojení z druhé strany zůstává 22 kV přetížené: ' + dispatch.load22);
+  if (!(dispatch.load110 < 1)) throw new Error('110kV trasa se přetížila: ' + dispatch.load110);
+  if (!(dispatch.mw110 > 20)) throw new Error('druhá trasa nepřevzala zátěž: ' + dispatch.mw110 + ' MW');
+  if (!(dispatch.powered > 0.95)) throw new Error('město není plně napájené přes dvě trasy: ' + dispatch.powered);
+
   // --- paralelní systémy vedení: posílení trasy až na 4× ---
   const multi = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);
