@@ -312,31 +312,113 @@
   }
   EG.schemaData = schemaData;
 
+  /* grafické jednopólové schéma rozvodny (SVG): vodorovné přípojnice
+     po hladinách, svislé odbočky se šipkami toku, trafa jako značka
+     dvou kružnic mezi přípojnicemi */
   function renderSchema(b) {
     const rows = schemaData(sim, b);
-    let html = '';
+    const sections = [];
+    let cur = null;
     for (const r of rows) {
-      if (r.type === 'bus') {
-        html += '<div class="bp-bus">' + r.label + '</div>';
-      } else if (r.type === 'trafo') {
-        const arrow = r.dir === 'down' ? '⇩' : '⇧';
-        const cls = r.load > 1 ? 'bad' : r.load > 0.75 ? 'warn' : '';
-        const regTag = r.reg ? ' <span class="dim">[reg: ' + { auto: 'auto', boost: '▲', limit: '▼' }[r.reg] + ']</span>' : '';
-        html += '<div class="bp-sch-trafo ' + cls + '">' + arrow + ' trafo ' + r.label +
-          ' · ' + r.mw.toFixed(1) + ' MW · ' + Math.round(r.load * 100) + ' %' + regTag + '</div>';
-      } else {
-        const arrow = r.dir === 'in' ? '←' : r.dir === 'out' ? '→' : '·';
-        const verb = r.type === 'load' ? '' : (r.dir === 'in' ? ' z ' : r.dir === 'out' ? ' do ' : ' ');
-        const cls = r.dir === 'in' ? 'in' : r.dir === 'out' ? 'out' : 'idle';
-        const over = r.type === 'line' && r.load > 1 ? ' <span class="bad">PŘETÍŽENO</span>' : '';
-        html += '<div class="bp-sch-feed ' + cls + '">' + arrow + verb + r.label +
-          ' · ' + r.mw.toFixed(1) + ' MW' + over + '</div>';
+      if (r.type === 'bus') { cur = { lv: r.lv, label: r.label, feeders: [], trafos: [] }; sections.push(cur); }
+      else if (r.type === 'trafo') cur.trafos.push(r);
+      else cur.feeders.push(r);
+    }
+    if (!sections.some((s) => s.feeders.length || s.trafos.length)) {
+      return '<div class="bp-trafo-none">Žádné toky – připoj vedení a kup trafa.</div>';
+    }
+    const esc = (t) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const rgb = (lv) => {
+      const c = LEVEL_COLOR[lv] || [0.6, 0.6, 0.6];
+      return 'rgb(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' + Math.round(c[2] * 255) + ')';
+    };
+    const dirCol = { in: '#7ed087', out: '#e8c84a', idle: '#6d7a87' };
+    const loadCol = (load) => load > 1 ? '#ff6a5a' : load > 0.75 ? '#f0c040' : '#9fb2c2';
+
+    const W = 252, busX0 = 6, busX1 = 246, fx = 14;
+    // rozvrh: Y jednotlivých přípojnic
+    const busY = new Map();
+    let y = 14;
+    for (const s of sections) {
+      busY.set(s.lv, y);
+      y += 10 + s.feeders.length * 15 + 8;
+    }
+    const H = y - 2;
+    let svg = '';
+
+    // přípojnice + odbočky (vedení a odběry)
+    for (const s of sections) {
+      const by = busY.get(s.lv);
+      svg += '<line x1="' + busX0 + '" y1="' + by + '" x2="' + busX1 + '" y2="' + by +
+        '" stroke="' + rgb(s.lv) + '" stroke-width="3.5"/>';
+      svg += '<text x="' + busX0 + '" y="' + (by - 4) + '" fill="#dfe6ef" font-size="9.5" font-weight="700">' +
+        esc(s.label) + '</text>';
+      let fy = by + 16;
+      for (const f of s.feeders) {
+        const col = f.load > 1 ? '#ff6a5a' : dirCol[f.dir];
+        // svislá odbočka z přípojnice
+        svg += '<line x1="' + fx + '" y1="' + (by + 2) + '" x2="' + fx + '" y2="' + (fy - 3) +
+          '" stroke="' + col + '" stroke-width="1.6"/>';
+        // šipka směru: dovnitř (k přípojnici) / ven
+        if (f.dir === 'in') {
+          svg += '<polygon points="' + (fx - 4) + ',' + (by + 9) + ' ' + (fx + 4) + ',' + (by + 9) + ' ' + fx + ',' + (by + 3) +
+            '" fill="' + col + '"/>';
+        } else if (f.dir === 'out') {
+          svg += '<polygon points="' + (fx - 4) + ',' + (fy - 9) + ' ' + (fx + 4) + ',' + (fy - 9) + ' ' + fx + ',' + (fy - 3) +
+            '" fill="' + col + '"/>';
+        }
+        // symbol odběru (šipka do trojúhelníku = zátěž) vs. vedení (kruh)
+        if (f.type === 'load') {
+          svg += '<polygon points="' + (fx - 4) + ',' + (fy - 3) + ' ' + (fx + 4) + ',' + (fy - 3) + ' ' + fx + ',' + (fy + 3) +
+            '" fill="none" stroke="' + col + '" stroke-width="1.2"/>';
+        } else {
+          svg += '<circle cx="' + fx + '" cy="' + (fy - 1) + '" r="2.2" fill="' + col + '"/>';
+        }
+        svg += '<text x="' + (fx + 10) + '" y="' + (fy + 2) + '" fill="' + col + '" font-size="9">' +
+          esc(f.label) + ' · ' + f.mw.toFixed(1) + ' MW' + (f.load > 1 ? ' ⚠' : '') + '</text>';
+        fy += 15;
       }
     }
-    if (!rows.some((r) => r.type !== 'bus')) {
-      html += '<div class="bp-trafo-none">Žádné toky – připoj vedení a kup trafa.</div>';
+
+    // trafa: svislé spoje mezi přípojnicemi se značkou dvou kružnic
+    let tIdx = 0;
+    for (const s of sections) {
+      for (const t of s.trafos) {
+        const x = 234 - tIdx * 22;
+        tIdx++;
+        const y1 = busY.get(s.lv), y2 = busY.get(t.lo);
+        if (y2 === undefined) continue;
+        const col = loadCol(t.load);
+        const ym = (y1 + y2) / 2;
+        svg += '<g><title>trafo ' + esc(t.label) + ' · ' + t.mw.toFixed(1) + ' MW · ' +
+          Math.round(t.load * 100) + ' %' + (t.reg ? ' · regulace: ' + t.reg : '') + '</title>';
+        svg += '<line x1="' + x + '" y1="' + (y1 + 2) + '" x2="' + x + '" y2="' + (ym - 8) +
+          '" stroke="' + col + '" stroke-width="1.6"/>';
+        svg += '<line x1="' + x + '" y1="' + (ym + 8) + '" x2="' + x + '" y2="' + (y2 - 2) +
+          '" stroke="' + col + '" stroke-width="1.6"/>';
+        svg += '<circle cx="' + x + '" cy="' + (ym - 3.5) + '" r="5.5" fill="none" stroke="' + col + '" stroke-width="1.6"/>';
+        svg += '<circle cx="' + x + '" cy="' + (ym + 3.5) + '" r="5.5" fill="none" stroke="' + col + '" stroke-width="1.6"/>';
+        // šipka směru toku
+        if (t.mw > 0.05) {
+          if (t.dir === 'down') {
+            svg += '<polygon points="' + (x - 4) + ',' + (y2 - 8) + ' ' + (x + 4) + ',' + (y2 - 8) + ' ' + x + ',' + (y2 - 2) +
+              '" fill="' + col + '"/>';
+          } else {
+            svg += '<polygon points="' + (x - 4) + ',' + (y1 + 8) + ' ' + (x + 4) + ',' + (y1 + 8) + ' ' + x + ',' + (y1 + 2) +
+              '" fill="' + col + '"/>';
+          }
+        }
+        svg += '<text x="' + (x + 8) + '" y="' + (ym + 2) + '" fill="' + col + '" font-size="8">' +
+          Math.round(t.load * 100) + '%</text>';
+        if (t.reg) {
+          svg += '<text x="' + (x + 8) + '" y="' + (ym + 11) + '" fill="#9fb2c2" font-size="8">' +
+            ({ auto: 'A', boost: '▲', limit: '▼' }[t.reg]) + '</text>';
+        }
+        svg += '</g>';
+      }
     }
-    return html;
+
+    return '<svg class="bp-svg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '">' + svg + '</svg>';
   }
 
   /* ---------- panel správy budovy ---------- */

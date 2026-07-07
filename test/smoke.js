@@ -1140,10 +1140,19 @@ const server = http.createServer((req, res) => {
   await page.waitForTimeout(250);
   const schemaUi = await page.evaluate(() => {
     const el = document.querySelector('#bp-schema');
-    return { visible: !el.hidden, text: el.textContent };
+    const svg = el.querySelector('svg.bp-svg');
+    return {
+      visible: !el.hidden, text: el.textContent,
+      hasSvg: !!svg,
+      busbars: svg ? svg.querySelectorAll('line[stroke-width="3.5"]').length : 0,
+      trafoCircles: svg ? svg.querySelectorAll('circle[fill="none"]').length : 0,
+    };
   });
-  console.log('schéma v UI:', JSON.stringify({ visible: schemaUi.visible, has110: schemaUi.text.includes('110 kV') }));
+  console.log('schéma v UI:', JSON.stringify({ visible: schemaUi.visible, hasSvg: schemaUi.hasSvg, busbars: schemaUi.busbars, trafoCircles: schemaUi.trafoCircles, has110: schemaUi.text.includes('110 kV') }));
   if (!schemaUi.visible || !schemaUi.text.includes('Schéma')) throw new Error('schéma se v panelu rozvodny nezobrazuje');
+  if (!schemaUi.hasSvg) throw new Error('schéma není grafické (chybí SVG)');
+  if (schemaUi.busbars !== 3) throw new Error('SVG nemá 3 přípojnice (110/22/0,4): ' + schemaUi.busbars);
+  if (schemaUi.trafoCircles !== 2) throw new Error('SVG nemá značku trafa (2 kružnice): ' + schemaUi.trafoCircles);
   if (!schemaUi.text.includes('110 kV')) throw new Error('schéma neukazuje 110kV přípojnici po nákupu trafa');
   await page.screenshot({ path: '/tmp/eg_panel.png' });
 
