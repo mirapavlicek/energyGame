@@ -252,6 +252,20 @@ const server = http.createServer((req, res) => {
     // tok přes trafo se měří
     const trafoLoad110 = (sub.trafoLoad || {}).t110_22 || 0;
 
+    // elektrárny se neřetězí: vedení musí končit v rozvodně
+    const plantChain = sim.connect(hydro, coal);
+    let solar2 = null, wind2 = null;
+    outerP:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (!solar2 && sim.canPlace('solar', x, y).ok) { solar2 = sim.place('solar', x, y); continue; }
+      if (solar2 && sim.canPlace('wind', x, y).ok && Math.hypot(x - solar2.x, y - solar2.y) < 10) {
+        wind2 = sim.place('wind', x, y); break outerP;
+      }
+    }
+    const sameLevelChain = wind2 ? sim.connect(solar2, wind2, 22) : null; // oba 22 kV
+    const cr = sim.buildings.find((o) => o.kind === 'xborder');
+    const plantToBorder = sim.connect(hydro, cr);
+
     return {
       genFresh: +genFresh.toFixed(1), genWorn: +genWorn.toFixed(1),
       wornIsLess: genWorn < genFresh * 0.7,
@@ -267,6 +281,9 @@ const server = http.createServer((req, res) => {
       levelsEmpty, noCommonNull: noCommon === null, supports110,
       wrongLevelNull: wrongLevel === null, tooFarNull: tooFar === null,
       trafoLoad110: +trafoLoad110.toFixed(2),
+      plantChainNull: plantChain === null,
+      sameLevelChainNull: sameLevelChain === null,
+      plantToBorderNull: plantToBorder === null,
     };
   });
   console.log('správa budov:', JSON.stringify(mgmt, null, 1));
@@ -317,6 +334,8 @@ const server = http.createServer((req, res) => {
   if (!mgmt.wrongLevelNull) throw new Error('vedení 22 kV k vodní elektrárně (110 kV) prošlo');
   if (!mgmt.tooFarNull) throw new Error('110kV vedení delší než 28 dlaždic prošlo');
   if (!(mgmt.trafoLoad110 > 0)) throw new Error('tok přes trafo se neměří');
+  if (!mgmt.plantChainNull || !mgmt.sameLevelChainNull) throw new Error('elektrárny jdou řetězit napřímo');
+  if (!mgmt.plantToBorderNull) throw new Error('elektrárna jde připojit rovnou na hraniční bod');
 
   // --- Kirchhoffovy zákony: bilance v každé přípojnici + nulový součet úbytků po smyčce ---
   const kirchhoff = await page.evaluate(() => {

@@ -81,6 +81,9 @@ převodu, takže jde řetězit vedení přes průchozí (spínací) stanice.
 
 Typický řetěz: vodní elektrárna (110 kV) → vedení 110 kV → rozvodna
 s trafem 110/22 kV + 22/0,4 kV → město.
+
+**Elektrárny se neřetězí napřímo** – každé vedení musí mít alespoň jeden
+konec v rozvodně (výkon se vyvádí přes rozvodnu, jako v reálné soustavě).
 - **Každé město má vlastní potřebu**: charakter (obytné / smíšené / průmyslové)
   určuje spotřebu na obyvatele i denní profil odběru – obytná města mají ranní
   a večerní špičku, průmyslová jedou přes den naplno a v noci v útlumu.
