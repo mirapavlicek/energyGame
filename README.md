@@ -23,6 +23,12 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
 - **Regulační trafa**: k instalovanému trafu lze dokoupit přepínač odboček
   (50 % ceny trafa) a pak tok trafem řídit – **▲ přednostní tok** ho posílí,
   **▼ škrcení** ho omezí a přesměruje výkon na paralelní cesty.
+- **Napojení mimo mapu**: na okrajích jsou 3 **přeshraniční předávací body**
+  sousedních soustav (Bavorsko, Sasko, Rakousko…, 400 kV). Po kliknutí
+  sjednáš smlouvy **oběma směry** po 10 MW (strop 120 MW): **import** je
+  take-or-pay (platíš sjednaný výkon 0,075/MWs, i když ho nevyužiješ),
+  **export** platí 0,050/MWs za skutečně dodané – a **nedodaný export se
+  sankcionuje 0,12/MWs**. Bod musíš připojit vedením 400 kV.
 - Města napájíš přes **rozvodny** (dosah 6 dlaždic) a vše spojuješ **vedením**.
 - **Toky v síti** se počítají zjednodušeným DC power-flow modelem – energie si
   sama najde cesty, delší vedení „klade větší odpor". Přetížené trasy červeně

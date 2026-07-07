@@ -325,6 +325,7 @@ const server = http.createServer((req, res) => {
     });
     for (const ca of sim.cityAssign) if (ca.sub >= 0) add(ca.sub + ':0.4', -ca.served);
     for (const ia of sim.indAssign) if (ia.sub >= 0) add(ia.sub + ':' + ia.level, -ia.served);
+    for (const xa of sim.xAssign) if (xa.bus >= 0) add(xa.bi + ':400', -xa.served);
     let kclErr = 0;
     for (const v of bal.values()) kclErr = Math.max(kclErr, Math.abs(v));
 
@@ -524,6 +525,86 @@ const server = http.createServer((req, res) => {
   if (!(industry.poweredNoVN < 0.1)) throw new Error('rozvodna bez VN trafa nemá průmysl napojit: ' + industry.poweredNoVN);
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
+
+  // --- přeshraniční obchod: smlouvy oběma směry, take-or-pay import, sankce za export ---
+  const xtrade = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 100000;
+    const crossings = sim.buildings.filter((b) => b.kind === 'xborder');
+    const cr = crossings[0];
+    const onEdge = (map.crossings || []).every((c) =>
+      c.x <= 3 || c.y <= 3 || c.x >= map.size - 4 || c.y >= map.size - 4);
+    const demolishRejected = !sim.demolish(cr.x, cr.y);
+    const supports400 = sim.supportsLevel(cr, 400);
+    // rozvodna + uhelná u předávacího bodu, spoj 400 kV
+    let sub = null;
+    for (let r = 1; r <= 6 && !sub; r++)
+      for (let dy = -r; dy <= r && !sub; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('sub', cr.x + dx, cr.y + dy).ok) { sub = sim.place('sub', cr.x + dx, cr.y + dy); break; }
+    sim.buyTrafo(sub, 't400_220');
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.connect(coal, sub, 220);
+    const linkOk = !!sim.connect(sub, cr, 400);
+
+    // export 30 MW: uhelná (90 MW) ho pokryje a inkasuje se
+    sim.adjustXContract(cr, 'export', 30);
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const exportServed = cr.xServed;
+    const exportedStat = sim.stats.exported;
+    const m0 = sim.money;
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+    const incomeExporting = sim.money - m0;
+
+    // smlouva nad možnosti (120 MW) -> sankce
+    sim.adjustXContract(cr, 'export', 90);
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+    const penaltyStat = sim.stats.xPenalty;
+    const servedAtCap = cr.xServed;
+
+    // import: když uhelná stojí, sjednaný nákup drží dodávku (a smlouvě se dostojí)
+    sim.adjustXContract(cr, 'import', 60);
+    coal.fuel = 0;
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+    const servedFromImport = cr.xServed;
+    const coalOut = coal.out;
+
+    // take-or-pay: import se platí, i když ho nikdo nebere
+    sim.adjustXContract(cr, 'export', -200); // -> 0
+    const m1 = sim.money;
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+    const importBill = m1 - sim.money;
+    const importUnused = Math.abs(cr.out) < 1;
+
+    // meze smluv
+    sim.adjustXContract(cr, 'import', 500);
+    const clampedHi = cr.xImport;
+    sim.adjustXContract(cr, 'import', -999);
+    const clampedLo = cr.xImport;
+
+    return {
+      nCrossings: crossings.length, onEdge, demolishRejected, supports400, linkOk,
+      exportServed: +exportServed.toFixed(1), exportedStat: +exportedStat.toFixed(1),
+      incomeExporting: +incomeExporting.toFixed(1),
+      penaltyStat: +penaltyStat.toFixed(2), servedAtCap: +servedAtCap.toFixed(1),
+      servedFromImport: +servedFromImport.toFixed(1), coalOut: +coalOut.toFixed(1),
+      importBill: +importBill.toFixed(1), importUnused,
+      clampedHi, clampedLo,
+    };
+  });
+  console.log('přeshraniční obchod:', JSON.stringify(xtrade));
+  if (xtrade.nCrossings !== 3 || !xtrade.onEdge) throw new Error('předávací body nejsou 3 na okrajích mapy');
+  if (!xtrade.demolishRejected) throw new Error('předávací bod jde zbourat');
+  if (!xtrade.supports400 || !xtrade.linkOk) throw new Error('předávací bod nejde připojit na 400 kV');
+  if (!(xtrade.exportServed > 28)) throw new Error('sjednaný export se nedodává: ' + xtrade.exportServed);
+  if (!(xtrade.incomeExporting > 1)) throw new Error('export nevydělává: ' + xtrade.incomeExporting);
+  if (!(xtrade.penaltyStat > 0.5)) throw new Error('nedodaný export nemá sankci: ' + xtrade.penaltyStat);
+  if (!(xtrade.servedFromImport > 50) || xtrade.coalOut !== 0) throw new Error('import nekryje dodávku při výpadku: ' + xtrade.servedFromImport);
+  if (!(xtrade.importBill > 8) || !xtrade.importUnused) throw new Error('import není take-or-pay: ' + xtrade.importBill);
+  if (xtrade.clampedHi !== 120 || xtrade.clampedLo !== 0) throw new Error('meze smluv nefungují: ' + xtrade.clampedHi + '/' + xtrade.clampedLo);
 
   // --- zásobníky energie: nabíjení z přebytků, vybíjení při deficitu, účinnost ---
   const storage = await page.evaluate(() => {
@@ -890,6 +971,32 @@ const server = http.createServer((req, res) => {
   if (!schemaUi.visible || !schemaUi.text.includes('Schéma')) throw new Error('schéma se v panelu rozvodny nezobrazuje');
   if (!schemaUi.text.includes('110 kV')) throw new Error('schéma neukazuje 110kV přípojnici po nákupu trafa');
   await page.screenshot({ path: '/tmp/eg_panel.png' });
+
+  // --- panel předávacího bodu: sjednání smlouvy klikáním v UI ---
+  await page.evaluate(() => {
+    const { sim, renderer } = EG.game;
+    const cr = sim.buildings.find((b) => b.kind === 'xborder');
+    const [wx, wy] = renderer.tileToWorld(cr.x, cr.y);
+    renderer.cam.x = wx; renderer.cam.y = wy;
+  });
+  await page.waitForTimeout(250);
+  await page.mouse.click(clickPos.x, clickPos.y);
+  await page.waitForTimeout(250);
+  const xPanel = await page.evaluate(() => {
+    const sim = EG.game.sim;
+    const cr = sim.buildings.find((b) => b.kind === 'xborder');
+    const visible = !document.querySelector('#bpanel').hidden;
+    const title = document.querySelector('#bp-title').textContent;
+    const rows = document.querySelectorAll('#bp-actions .bp-xrow');
+    const importPlus = rows[0] && rows[0].querySelectorAll('button')[1];
+    if (importPlus) importPlus.click();
+    return { visible, title, nRows: rows.length, imp: cr.xImport, statsText: document.querySelector('#bp-stats').textContent };
+  });
+  console.log('panel předávacího bodu:', JSON.stringify({ visible: xPanel.visible, title: xPanel.title, nRows: xPanel.nRows, imp: xPanel.imp }));
+  if (!xPanel.visible || !xPanel.title.includes('Soused')) throw new Error('panel předávacího bodu se neotevřel: ' + xPanel.title);
+  if (xPanel.nRows !== 2) throw new Error('panel nemá řádky pro oba směry smluv');
+  if (xPanel.imp !== 10) throw new Error('sjednání importu klikáním nefunguje: ' + xPanel.imp);
+  if (!xPanel.statsText.includes('take-or-pay')) throw new Error('panel neukazuje podmínky smluv');
 
   // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 7 úrovní,
   //     různé max. délky přímo v popiscích ---

@@ -12,7 +12,7 @@
   const S = {
     WATER: 0, SAND: 1, GRASS: 2, FOREST: 3, HILL: 4, MOUNTAIN: 5, RIVER: 6, RESERVOIR: 7,
     HOUSE: 8, HOUSE2: 9, CENTER: 10, HYDRO: 11, DAM: 12, COAL: 13, SOLAR: 14, WIND: 15,
-    SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22,
+    SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22, XBORDER: 23,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -282,6 +282,33 @@
       c.moveTo(AX + 1, AY - 30); c.lineTo(AX - 4, AY - 21); c.lineTo(AX - 1, AY - 21);
       c.lineTo(AX - 3, AY - 13); c.lineTo(AX + 4, AY - 23); c.lineTo(AX + 1, AY - 23);
       c.closePath(); c.fill();
+    });
+
+    at(S.XBORDER, (c) => {
+      tile(c, '#b9b3a4', '#cbc6b8', '#968f80');
+      // hraniční stožár (příhradový)
+      c.strokeStyle = '#6e7680'; c.lineWidth = 2.5;
+      c.beginPath(); c.moveTo(AX - 7, AY + 2); c.lineTo(AX, AY - 46); c.stroke();
+      c.beginPath(); c.moveTo(AX + 7, AY + 2); c.lineTo(AX, AY - 46); c.stroke();
+      c.strokeStyle = '#8a929c'; c.lineWidth = 1.2;
+      for (let i = 0; i < 4; i++) {
+        const t0 = i / 4, t1 = (i + 1) / 4;
+        c.beginPath();
+        c.moveTo(AX - 7 + 7 * t0, AY + 2 - 48 * t0); c.lineTo(AX + 7 - 7 * t1, AY + 2 - 48 * t1);
+        c.moveTo(AX + 7 - 7 * t0, AY + 2 - 48 * t0); c.lineTo(AX - 7 + 7 * t1, AY + 2 - 48 * t1);
+        c.stroke();
+      }
+      // konzole s vodiči mizející „za mapu"
+      c.strokeStyle = '#4a4f57'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(AX - 14, AY - 36); c.lineTo(AX + 14, AY - 36); c.stroke();
+      c.strokeStyle = 'rgba(74,79,87,0.6)'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(AX - 13, AY - 35); c.quadraticCurveTo(AX - 22, AY - 26, AX - 30, AY - 30); c.stroke();
+      c.beginPath(); c.moveTo(AX + 13, AY - 35); c.quadraticCurveTo(AX + 22, AY - 26, AX + 30, AY - 30); c.stroke();
+      // šipky obou směrů (nákup/prodej)
+      c.fillStyle = '#e8c84a';
+      c.beginPath(); c.moveTo(AX - 4, AY - 52); c.lineTo(AX - 10, AY - 49); c.lineTo(AX - 4, AY - 46); c.closePath(); c.fill();
+      c.fillStyle = '#7ed087';
+      c.beginPath(); c.moveTo(AX + 4, AY - 52); c.lineTo(AX + 10, AY - 49); c.lineTo(AX + 4, AY - 46); c.closePath(); c.fill();
     });
 
     at(S.SEL, (c) => {

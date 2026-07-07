@@ -48,6 +48,10 @@
       desc: 'Bateriové úložiště 80 MWs: nabíjí se z přebytků, vybíjí při deficitu (účinnost 90 %). Připojení 22 kV.',
       hotkey: '9',
     },
+    xborder: {
+      name: 'Přeshraniční bod', cost: 0, upkeep: 0, hidden: true,
+      desc: 'Napojení na sousední soustavu (400 kV). Klikni a sjednej smlouvy na nákup/prodej energie.',
+    },
     line: {
       name: 'Vedení', cost: 0, upkeep: 0,
       desc: 'Spojuje stavby. Vyber napěťovou úroveň – liší se kapacitou, cenou i max. délkou.',
@@ -71,7 +75,17 @@
   };
 
   /* výstupní napětí elektráren – vedení k nim musí mít stejnou úroveň */
-  const GEN_LEVEL = { dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22, psh: 110, battery: 22 };
+  const GEN_LEVEL = { dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22, psh: 110, battery: 22, xborder: 400 };
+
+  /* Přeshraniční obchod: smlouvy v obou směrech, krok 10 MW, strop 120 MW.
+     Import je „take-or-pay" – platíš sjednaný výkon, i když ho nevyužiješ.
+     Nedodaný export se sankcionuje. */
+  const XTRADE = {
+    step: 10, max: 120,
+    importPrice: 0.075,  // platíš za sjednanou MW·s importu
+    exportPrice: 0.050,  // dostáváš za skutečně dodanou MW·s exportu
+    penalty: 0.12,       // sankce za nedodanou MW·s sjednaného exportu
+  };
 
   /* Zásobníky energie: kapacita (MW·s), max. výkon a round-trip účinnost.
      Nabíjí se automaticky z přebytků své sítě, vybíjí při deficitu. */
@@ -127,6 +141,17 @@
     this.messages = [];
     this.stats = { produced: 0, delivered: 0, demand: 0 };
     this._noiseT = Math.random() * 1000;
+
+    // přeshraniční předávací body jako pevné (nezbouratelné) uzly sítě
+    for (const cr of map.crossings || []) {
+      this.buildings.push({
+        id: this.nextId++, kind: 'xborder', x: cr.x, y: cr.y,
+        name: cr.name, out: 0, gen: 0,
+        level: 1, cond: 1, broken: false, contract: false, rangeLevel: 0,
+        xImport: 0, xExport: 0,  // sjednané smlouvy v MW
+        xServed: 0,              // skutečně dodaný export
+      });
+    }
   }
 
   Sim.prototype.msg = function (text, kind) {
@@ -269,6 +294,7 @@
       return false;
     }
     if (b.kind === 'dam') { this.msg('Přehradu nelze zbourat (nádrž je napuštěná)', 'warn'); return false; }
+    if (b.kind === 'xborder') { this.msg('Předávací bod sousední soustavy zbourat nejde', 'warn'); return false; }
     this.buildings = this.buildings.filter((o) => o !== b);
     this.lines = this.lines.filter((l) => l.a !== b.id && l.b !== b.id);
     let refund = BUILD[b.kind].cost;
@@ -447,6 +473,18 @@
       ' – ' + BUILD[b.kind].name);
   };
 
+  /* sjednání přeshraniční smlouvy: dir = 'import' | 'export', delta v MW */
+  Sim.prototype.adjustXContract = function (b, dir, delta) {
+    if (b.kind !== 'xborder') return false;
+    const field = dir === 'import' ? 'xImport' : 'xExport';
+    const next = Math.max(0, Math.min(XTRADE.max, b[field] + delta));
+    if (next === b[field]) return false;
+    b[field] = next;
+    this.msg(b.name + ': smlouva na ' + (dir === 'import' ? 'nákup (import)' : 'prodej (export)') +
+      ' ' + next + ' MW');
+    return true;
+  };
+
   Sim.prototype.rangeUpgradeCost = function (b) {
     if (b.kind !== 'sub' || b.rangeLevel >= MAX_RANGE_LEVEL) return null;
     return 80 * (b.rangeLevel + 1);
@@ -476,6 +514,7 @@
         return Math.min(150, 30 + f * 7 + (b.reservoir || 0) * 3);
       }
       case 'coal': return (b.fuel === undefined || b.fuel > 0) ? 90 : 0; // bez uhlí stojí
+      case 'xborder': return b.xImport || 0; // sjednaný import = dostupný zdroj
       case 'solar': return 35 * sun * fx.solar;
       case 'wind': {
         const TT = T();
@@ -675,6 +714,18 @@
       indAssign.push({ ind, sub: best, bus: bestBus, level: bestLv, demand: d, served: 0 });
     }
 
+    // sjednaný export do zahraničí = odběr na 400kV busu předávacího bodu
+    const xAssign = [];
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      if (b.kind !== 'xborder') continue;
+      b.xServed = 0;
+      if (!(b.xExport > 0)) continue;
+      const bus = busOf.get(i + ':400');
+      totalDemand += b.xExport;
+      xAssign.push({ b, bi: i, bus: bus === undefined ? -1 : bus, demand: b.xExport, served: 0 });
+    }
+
     // --- komponenty souvislosti přes hrany (vedení + trafa) ---
     const adj = Array.from({ length: nb }, () => []);
     for (const e of edges) {
@@ -711,6 +762,9 @@
     }
     for (const ia of indAssign) {
       if (ia.bus >= 0) compDem[comp[ia.bus]] += ia.demand;
+    }
+    for (const xa of xAssign) {
+      if (xa.bus >= 0) compDem[comp[xa.bus]] += xa.demand;
     }
 
     /* --- zásobníky energie (baterie, přečerpávačky): dispečink ---
@@ -791,6 +845,12 @@
         const r1 = compDem[c] > 0 ? Math.min(1, compGen[c] / compDem[c]) : 0;
         inj1[ia.bus] -= ia.demand * r1;
       }
+      for (const xa of xAssign) {
+        if (xa.bus < 0) continue;
+        const c = comp[xa.bus];
+        const r1 = compDem[c] > 0 ? Math.min(1, compGen[c] / compDem[c]) : 0;
+        inj1[xa.bus] -= xa.demand * r1;
+      }
       for (let i = 0; i < n; i++) {
         if (genBus[i] < 0) continue;
         const c = comp[genBus[i]];
@@ -851,12 +911,23 @@
       delivered += ia.served;
       indDelivered += ia.served;
     }
+    for (const xa of xAssign) {
+      if (xa.bus < 0) continue;
+      const c = comp[xa.bus];
+      const ratio = compDem[c] > 0 ? Math.min(1, Math.max(0, compGen[c] - compLoss[c]) / compDem[c]) : 0;
+      xa.served = xa.demand * ratio;
+      xa.b.xServed = xa.served;
+      inj[xa.bus] -= xa.served;
+    }
     const compServed = new Float64Array(nc);
     for (const ca of cityAssign) {
       if (ca.sub >= 0 && nnBus[ca.sub] >= 0) compServed[comp[nnBus[ca.sub]]] += ca.served;
     }
     for (const ia of indAssign) {
       if (ia.bus >= 0) compServed[comp[ia.bus]] += ia.served;
+    }
+    for (const xa of xAssign) {
+      if (xa.bus >= 0) compServed[comp[xa.bus]] += xa.served;
     }
     // nabíjení zásobníků se krátí stejně jako ostatní odběry (kvůli ztrátám)
     const compCharge = new Float64Array(nc);
@@ -987,6 +1058,7 @@
     // --- opotřebení, poruchy a servisní smlouvy ---
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
+      if (!WEAR[b.kind]) continue; // předávací body se neopotřebovávají
       if (!b.broken) {
         // elektrárny se opotřebovávají podle vytížení, rozvodny podle přenášeného odběru
         let util;
@@ -1017,14 +1089,39 @@
       for (const [key, count] of Object.entries(b.trafos || {})) upkeep += TRAFOS[key].cost * 0.004 * count;
     }
     for (const l of this.lines) upkeep += l.len * LINE_TYPES[l.level].cost * 0.01;
+    // --- přeshraniční obchod: import take-or-pay, export za dodané, sankce za nedodané ---
+    let xIncome = 0, xCost = 0, xPenalty = 0, exported = 0, imported = 0;
+    for (const b of this.buildings) {
+      if (b.kind !== 'xborder') continue;
+      if (b.xImport > 0) {
+        xCost += b.xImport * XTRADE.importPrice; // platíš plnou smlouvu, i nevyužitou
+        imported += b.out;
+      }
+      if (b.xExport > 0) {
+        xIncome += b.xServed * XTRADE.exportPrice;
+        exported += b.xServed;
+        const short = b.xExport - b.xServed;
+        if (short > 0.5) {
+          xPenalty += short * XTRADE.penalty;
+          if (this._xPenWarnT !== Math.floor(this.time / 7)) {
+            this._xPenWarnT = Math.floor(this.time / 7);
+            this.msg('SANKCE: ' + b.name + ' – nedodáváš sjednaný export (' +
+              b.xServed.toFixed(0) + '/' + b.xExport + ' MW)!', 'warn');
+          }
+        }
+      }
+    }
+
     // průmysl platí za MWh o 40 % víc než města
-    const income = (delivered - indDelivered) * PRICE_PER_MWH + indDelivered * PRICE_PER_MWH * 1.4;
+    const income = (delivered - indDelivered) * PRICE_PER_MWH + indDelivered * PRICE_PER_MWH * 1.4
+      + xIncome - xCost - xPenalty;
     this.money += (income - upkeep * 0.01) * dt;
-    this.score += delivered * dt * 0.01;
+    this.score += (delivered + exported) * dt * 0.01;
 
     this.stats = {
       produced, delivered, indDelivered, demand: totalDemand,
       losses: totalLoss,
+      exported, imported, xPenalty,
       overloaded, overloadedTrafos,
       unpowered: cityAssign.filter((ca) => (ca.demand > 0 && (ca.served / ca.demand) < 0.5)).length +
         indAssign.filter((ia) => (ia.demand > 0 && (ia.served / ia.demand) < 0.5)).length,
@@ -1032,6 +1129,7 @@
     };
     this.cityAssign = cityAssign;
     this.indAssign = indAssign;
+    this.xAssign = xAssign;
   };
 
   EG.Sim = Sim;
@@ -1039,6 +1137,7 @@
   EG.FUEL = FUEL;
   EG.STORAGE = STORAGE;
   EG.TRAFO_REG = TRAFO_REG;
+  EG.XTRADE = XTRADE;
   EG.LEVELS = LEVELS;
   EG.LINE_TYPES = LINE_TYPES;
   EG.GEN_LEVEL = GEN_LEVEL;
