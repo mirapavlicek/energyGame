@@ -491,21 +491,53 @@ const server = http.createServer((req, res) => {
   if (!subPanel.levels.includes('110')) throw new Error('trafo nepřidalo 110kV přípojnici: ' + subPanel.levels);
   await page.screenshot({ path: '/tmp/eg_panel.png' });
 
-  // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 7 úrovní ---
+  // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 7 úrovní,
+  //     různé max. délky přímo v popiscích ---
   const linebar = await page.evaluate(() => {
     const disp = () => getComputedStyle(document.querySelector('#linebar')).display;
     const hiddenInPan = disp() === 'none';
     document.querySelector('.tool[data-tool="line"]').click();
     const visibleInLine = disp() !== 'none';
     const nLevels = document.querySelectorAll('.linelvl').length;
+    const maxLens = [...document.querySelectorAll('.linelvl')].map((el) => {
+      const m = el.textContent.match(/max (\d+) dl/);
+      return m ? +m[1] : null;
+    });
+    const maxLensDiffer = new Set(maxLens).size === maxLens.length && !maxLens.includes(null);
     document.querySelector('.linelvl[data-level="400"]').click();
     document.querySelector('.tool[data-tool="pan"]').click();
     const hiddenAgain = disp() === 'none';
-    return { hiddenInPan, visibleInLine, nLevels, hiddenAgain };
+    return { hiddenInPan, visibleInLine, nLevels, hiddenAgain, maxLens, maxLensDiffer };
   });
   console.log('paleta napětí:', JSON.stringify(linebar));
   if (!linebar.hiddenInPan || !linebar.visibleInLine || !linebar.hiddenAgain) throw new Error('paleta napětí se špatně schovává/ukazuje');
   if (linebar.nLevels !== 7) throw new Error('má být 7 napěťových úrovní, je ' + linebar.nLevels);
+  if (!linebar.maxLensDiffer) throw new Error('každá úroveň má mít vlastní max. délku v popisku: ' + JSON.stringify(linebar.maxLens));
+
+  // --- max. délky se u úrovní liší a vynucují se ---
+  const maxLen = await page.evaluate(() => {
+    const lens = EG.LEVELS.map((lv) => EG.LINE_TYPES[lv].maxLen);
+    const map = EG.generateMap(160, 43);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    // dvě rozvodny s 400kV i 22kV přípojnicí ve vzdálenosti 15–20 dlaždic
+    let s1 = null, s2 = null;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (!sim.canPlace('sub', x, y).ok) continue;
+      if (!s1) { s1 = sim.place('sub', x, y); continue; }
+      const d = Math.hypot(x - s1.x, y - s1.y);
+      if (d >= 15 && d <= 20) { s2 = sim.place('sub', x, y); break outer; }
+    }
+    for (const s of [s1, s2]) { sim.buyTrafo(s, 't400_110'); sim.buyTrafo(s, 't110_22'); }
+    const far22 = sim.connect(s1, s2, 22);    // 22 kV: max 14 -> musí selhat
+    const ok400 = sim.connect(s1, s2, 400);   // 400 kV: max 48 -> projde
+    return { lens, unique: new Set(lens).size, far22Null: far22 === null, ok400: !!ok400 };
+  });
+  console.log('max. délky:', JSON.stringify(maxLen));
+  if (maxLen.unique !== 7) throw new Error('úrovně nemají rozdílné max. délky: ' + JSON.stringify(maxLen.lens));
+  if (!maxLen.far22Null) throw new Error('22 kV vedení delší než 14 dlaždic prošlo');
+  if (!maxLen.ok400) throw new Error('400 kV vedení na stejnou vzdálenost neprošlo');
 
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {

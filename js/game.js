@@ -215,8 +215,9 @@
       const [r, g, b] = LEVEL_COLOR[lv];
       el.innerHTML = '<span class="swatch" style="background:rgb(' +
         Math.round(r * 255) + ',' + Math.round(g * 255) + ',' + Math.round(b * 255) + ')"></span>' +
-        LT.name + '<span class="cost">' + LT.cap + ' MW · ' + LT.cost + '/dl</span>';
-      el.title = 'Kapacita ' + LT.cap + ' MW, max. délka ' + LT.maxLen + ' dlaždic, cena ' + LT.cost + ' za dlaždici.';
+        LT.name + '<span class="cost">' + LT.cap + ' MW · max ' + LT.maxLen + ' dl · ' + LT.cost + '/dl</span>';
+      el.title = 'Kapacita ' + LT.cap + ' MW, max. délka ' + LT.maxLen + ' dlaždic, cena ' + LT.cost +
+        ' za dlaždici, ztráty ' + (LT.loss * 100).toFixed(2) + ' %/dl při plném zatížení.';
       el.addEventListener('click', () => setLineLevel(lv));
       bar.appendChild(el);
     }
@@ -424,6 +425,12 @@
     }
     const city = map.cities.find((c) => Math.abs(c.x - gx) <= 2 && Math.abs(c.y - gy) <= 2);
     if (city) s += ' · ' + city.name + ' (' + city.pop + ' tis., napájení ' + Math.round((city.powered || 0) * 100) + ' %)';
+    if (tool === 'line' && lineFrom) {
+      const LT = EG.LINE_TYPES[lineLevel];
+      const d = Math.hypot(lineFrom.x - gx, lineFrom.y - gy);
+      s += ' · ' + LT.name + ' délka ' + d.toFixed(1) + ' / max ' + LT.maxLen + ' dl' +
+        (d > LT.maxLen ? ' – PŘÍLIŠ DALEKO' : '');
+    }
     el.textContent = s;
   }
 
@@ -523,9 +530,10 @@
       const dir = l.flow > 0.5 ? 1 : (l.flow < -0.5 ? -1 : 0);
       renderer.pushLine(a.x, a.y, b.x, b.y, r, g, bl, 0.95, Math.min(1, l.load), dir);
     }
-    // rozestavěné vedení – barvou zvolené úrovně
+    // rozestavěné vedení – barvou zvolené úrovně, červeně když je moc dlouhé
     if (tool === 'line' && lineFrom) {
-      const lc = LEVEL_COLOR[lineLevel];
+      const tooLong = Math.hypot(lineFrom.x - hover[0], lineFrom.y - hover[1]) > EG.LINE_TYPES[lineLevel].maxLen;
+      const lc = tooLong ? [1, 0.2, 0.15] : LEVEL_COLOR[lineLevel];
       renderer.pushLine(lineFrom.x, lineFrom.y, hover[0], hover[1], lc[0], lc[1], lc[2], 0.6, 0, 0);
     }
 
