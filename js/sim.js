@@ -383,11 +383,58 @@
     return this._baseGenOf(b, sun, wind) * (1 + 0.25 * (b.level - 1)) * this.condFactor(b);
   };
 
-  /* Poptávka města v MW – roste s populací, přes den vyšší */
+  /* Poptávka města v MW – každé město má vlastní potřebu: roste s populací,
+     spotřeba na obyvatele a denní profil se liší podle charakteru města. */
   Sim.prototype._cityDemand = function (c, dayPhase) {
-    const base = c.pop * 1.15;
-    const curve = 0.6 + 0.4 * Math.max(0, Math.sin((dayPhase - 0.2) * Math.PI * 2) * 0.5 + 0.5);
+    const base = c.pop * (c.needPerCap || 1.15);
+    const h = (6 + dayPhase * 24) % 24;
+    let curve;
+    if (c.kind === 'ind') {
+      // průmysl: směnný provoz, přes den naplno, v noci útlum
+      curve = (h >= 6 && h < 22) ? 1 : 0.7;
+    } else if (c.kind === 'res') {
+      // obytné: ranní a večerní špička, v noci minimum
+      const morning = Math.exp(-Math.pow(h - 7.5, 2) / 4.5);
+      const evening = Math.exp(-Math.pow(h - 19.5, 2) / 6);
+      curve = 0.45 + 0.55 * Math.max(morning, evening);
+    } else {
+      // smíšené: pozvolný denní oblouk
+      curve = 0.6 + 0.4 * Math.max(0, Math.sin((dayPhase - 0.2) * Math.PI * 2) * 0.5 + 0.5);
+    }
     return base * curve;
+  };
+
+  /* --- pomalý růst měst: s populací přibývá zástavba na mapě --- */
+  Sim.prototype._syncHouses = function (c) {
+    if (c.housesBase === undefined) c.housesBase = c.houses.length;
+    const target = Math.max(3, c.housesBase + Math.floor((c.pop - c.popBase) / 3));
+    while (c.houses.length > target) c.houses.pop();
+    let guard = 0;
+    while (c.houses.length < target && guard++ < 50) {
+      if (!this._addHouse(c)) break;
+    }
+  };
+
+  Sim.prototype._addHouse = function (c) {
+    const m = this.map;
+    const TT = T();
+    const occupied = new Set();
+    for (const cc of m.cities) for (const [hx, hy] of cc.houses) occupied.add(hx + ',' + hy);
+    let best = null, bestD = Infinity;
+    for (let dy = -5; dy <= 5; dy++) for (let dx = -5; dx <= 5; dx++) {
+      const x = c.x + dx, y = c.y + dy;
+      if (x < 1 || y < 1 || x >= m.size - 1 || y >= m.size - 1) continue;
+      const t = m.type[m.idx(x, y)];
+      if (t !== TT.GRASS && t !== TT.FOREST && t !== TT.SAND) continue;
+      if (occupied.has(x + ',' + y)) continue;
+      if (this.buildingAt(x, y)) continue;
+      // nejblíž centru, s trochou šumu ať zástavba není čtvercová
+      const d = Math.abs(dx) + Math.abs(dy) + EG.rng.hash2(x, y, m.seed + 5) * 1.5;
+      if (d < bestD) { bestD = d; best = [x, y]; }
+    }
+    if (!best) return false;
+    c.houses.push(best);
+    return true;
   };
 
   /* hlavní tick simulace – dt v herních sekundách */
@@ -633,7 +680,7 @@
       if (overloadedTrafos > 0) this.msg('Trafo přetíženo! Přikup další kus do rozvodny.', 'warn');
     }
 
-    // --- města: spokojenost, růst, výpadky ---
+    // --- města: spokojenost, pomalý růst, výpadky ---
     for (const ca of cityAssign) {
       const c = ca.city;
       const ratio = ca.demand > 0 ? ca.served / ca.demand : 0;
@@ -641,14 +688,19 @@
       if (ratio > 0.95) {
         c.satisfaction = Math.min(1, c.satisfaction + dt * 0.02);
         c.unhappyTime = 0;
-        if (Math.random() < dt * 0.02 && c.pop < 60) {
+        // pomalý růst: jen spokojená města, a čím větší, tím pomaleji
+        const growRate = 0.008 * c.satisfaction * (1 - c.pop / 80);
+        if (Math.random() < dt * growRate && c.pop < 60) {
           c.pop += 1;
+          this._syncHouses(c);
+          this.msg(c.name + ' se rozrostlo na ' + c.pop + ' tis. obyvatel');
         }
       } else {
         c.satisfaction = Math.max(0, c.satisfaction - dt * (0.05 + 0.1 * (1 - ratio)));
         c.unhappyTime += dt;
         if (c.unhappyTime > 20 && Math.random() < dt * 0.03 && c.pop > 4) {
           c.pop -= 1;
+          this._syncHouses(c);
           this.blackouts++;
         }
       }

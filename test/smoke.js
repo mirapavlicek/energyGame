@@ -410,6 +410,44 @@ const server = http.createServer((req, res) => {
   if (!(losses.loLink > losses.hiLink * 2)) throw new Error('22 kV neztrácí výrazně víc než 110 kV: ' + losses.loLink + ' vs ' + losses.hiLink);
   if (!losses.hiProducedMore) throw new Error('výroba nekryje ztráty (produced <= delivered)');
 
+  // --- města: individuální potřeba (charakter, spotřeba, denní profil) a růst zástavby ---
+  const cities = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    const kinds = new Set(map.cities.map((c) => c.kind));
+    const needs = new Set(map.cities.map((c) => +c.needPerCap.toFixed(2)));
+    const c = map.cities[0];
+    // večerní špička (19:30) vs hluboká noc (02:00)
+    const eveningD = sim._cityDemand(c, 0.5625);
+    const nightD = sim._cityDemand(c, 0.8333);
+    // dvě města se stejnou populací mají různou potřebu
+    const c2 = map.cities.find((o) => o !== c && Math.abs(o.needPerCap - c.needPerCap) > 0.05);
+    const samePopDiffer = c2
+      ? Math.abs(sim._cityDemand(c, 0.5) / c.pop - sim._cityDemand(c2, 0.5) / c2.pop) > 0.01
+      : false;
+    // růst populace přidává domy, úbytek je zase bere
+    const before = c.houses.length;
+    c.pop += 6; sim._syncHouses(c);
+    const after = c.houses.length;
+    c.pop -= 6; sim._syncHouses(c);
+    const back = c.houses.length;
+    return {
+      nCities: map.cities.length, nKinds: kinds.size, nNeeds: needs.size,
+      eveningD: +eveningD.toFixed(1), nightD: +nightD.toFixed(1),
+      eveningHigher: eveningD > nightD * 1.15,
+      samePopDiffer,
+      housesBefore: before, housesGrown: after, housesBack: back,
+      grew: after === before + 2, shrank: back === before,
+    };
+  });
+  console.log('města:', JSON.stringify(cities));
+  if (cities.nKinds < 2) throw new Error('města nemají různé charaktery');
+  if (cities.nNeeds < 3) throw new Error('města nemají individuální spotřebu');
+  if (!cities.eveningHigher) throw new Error('denní profil odběru nefunguje: ' + cities.eveningD + ' vs ' + cities.nightD);
+  if (!cities.samePopDiffer) throw new Error('dvě města se stejnou populací mají stejnou potřebu na obyvatele');
+  if (!cities.grew) throw new Error('růst populace nepřidává domy: ' + cities.housesBefore + ' -> ' + cities.housesGrown);
+  if (!cities.shrank) throw new Error('úbytek populace neubírá domy');
+
   // --- panel správy v živé hře: klik na budovu jako hráč ---
   const panel = await page.evaluate(() => {
     const { sim, map, renderer } = EG.game;

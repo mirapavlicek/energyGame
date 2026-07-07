@@ -145,8 +145,16 @@
         }
       if (!nearRiver && rand() < 0.55) continue;
       const pop = 6 + Math.floor(rand() * 22); // tisíce obyvatel
+      // charakter města: obytné / průmyslové / smíšené – liší se spotřebou
+      // na obyvatele i denním profilem odběru
+      const kr = rand();
+      const kind = kr < 0.4 ? 'res' : kr < 0.72 ? 'mix' : 'ind';
+      const needPerCap = kind === 'res' ? 0.8 + rand() * 0.3
+        : kind === 'ind' ? 1.3 + rand() * 0.4
+        : 1.0 + rand() * 0.3;
       cities.push({
-        x, y, pop, name: CITY_NAMES[cities.length % CITY_NAMES.length],
+        x, y, pop, popBase: pop, kind, needPerCap,
+        name: CITY_NAMES[cities.length % CITY_NAMES.length],
         satisfaction: 1, unhappyTime: 0, houses: [],
       });
       // zabrat okolní dlaždice pro zástavbu (jen vizuál + zákaz stavění)

@@ -424,7 +424,12 @@
       s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round(b.cond * 100) + ' %';
     }
     const city = map.cities.find((c) => Math.abs(c.x - gx) <= 2 && Math.abs(c.y - gy) <= 2);
-    if (city) s += ' · ' + city.name + ' (' + city.pop + ' tis., napájení ' + Math.round((city.powered || 0) * 100) + ' %)';
+    if (city) {
+      const kindName = { res: 'obytné', ind: 'průmyslové', mix: 'smíšené' }[city.kind] || '';
+      const ca = (sim.cityAssign || []).find((a) => a.city === city);
+      s += ' · ' + city.name + ' (' + kindName + ', ' + city.pop + ' tis., potřeba ' +
+        (ca ? ca.demand.toFixed(0) : '?') + ' MW, napájení ' + Math.round((city.powered || 0) * 100) + ' %)';
+    }
     if (tool === 'line' && lineFrom) {
       const LT = EG.LINE_TYPES[lineLevel];
       const d = Math.hypot(lineFrom.x - gx, lineFrom.y - gy);
