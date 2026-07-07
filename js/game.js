@@ -616,6 +616,23 @@
     } else {
       rows += 'Výkon: <span class="val">' + b.out.toFixed(1) + ' / ' + b.gen.toFixed(1) + ' MW</span><br>';
       rows += 'Výstupní napětí: <span class="val">' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + '</span><br>';
+      // proč výkon kolísá: sezónní a denní vlivy zdroje
+      const fx = sim.seasonFx || {};
+      const seasonPct = (v) => (v >= 1 ? '+' : '') + Math.round((v - 1) * 100) + ' %';
+      if (b.kind === 'hydro' || b.kind === 'dam') {
+        rows += 'Průtok řeky: <span class="val">' +
+          (map.flow[map.idx(b.x, b.y)] * (fx.hydro || 1)).toFixed(1) +
+          '</span> · sezóna <span class="val">' + seasonPct(fx.hydro || 1) + '</span>' +
+          ' <span class="dim">(' + (sim.seasonName || '') + ')</span><br>';
+      } else if (b.kind === 'solar') {
+        rows += 'Slunce: <span class="val">' + Math.round((sim.sun || 0) * 100) + ' %</span>' +
+          ' · sezóna <span class="val">' + seasonPct(fx.solar || 1) + '</span>' +
+          ' <span class="dim">(' + (sim.seasonName || '') + ')</span><br>';
+      } else if (b.kind === 'wind') {
+        rows += 'Vítr: <span class="val">' + Math.round((sim.wind || 0) * 100) + ' %</span>' +
+          ' · sezóna <span class="val">' + seasonPct(fx.wind || 1) + '</span>' +
+          ' <span class="dim">(' + (sim.seasonName || '') + ')</span><br>';
+      }
       const fd = EG.FUEL[b.kind];
       if (fd) {
         const pct = Math.round(b.fuel / fd.cap * 100);
