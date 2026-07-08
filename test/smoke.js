@@ -723,6 +723,109 @@ const server = http.createServer((req, res) => {
   if (sources.bioName !== 'štěpka' || sources.bioGen !== 70) throw new Error('retrofit na biomasu nefunguje: ' + sources.bioName + '/' + sources.bioGen);
   if (sources.maxLevel !== 5 || sources.multL5 !== 1.8) throw new Error('5 úrovní modernizace nefunguje');
 
+  // --- síť: HVDC, kompenzace, kabely, pole rozvodny, N-1, frekvence ---
+  const gridB = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    // dvě rozvodny daleko od sebe (65–90 dlaždic): VVN 800 nedosáhne, HVDC ano
+    let s1 = null, s2 = null;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (!sim.canPlace('sub', x, y).ok) continue;
+      if (!s1) { s1 = sim.place('sub', x, y); continue; }
+      const d = Math.hypot(x - s1.x, y - s1.y);
+      if (d >= 65 && d <= 90) { s2 = sim.place('sub', x, y); break outer; }
+    }
+    sim.buyTrafo(s1, 'thvdc'); sim.buyTrafo(s2, 'thvdc');
+    const far800 = sim.connect(s1, s2, 800);   // max 60 -> null (nemají ani 800 bus)
+    const hvdc = sim.connect(s1, s2, 500);     // HVDC max 200 -> ok
+    // pole rozvodny: úroveň 1 = 6 polí (thvdc zabírá 1, HVDC linka 1)
+    let bought = 0;
+    while (sim.buyTrafo(s1, 't22_04')) bought++;
+    const fieldsFull = sim.fieldsUsed(s1) === sim.fieldLimit(s1);
+    sim.upgrade(s1); // +3 pole
+    const afterUpgrade = sim.buyTrafo(s1, 't22_04');
+
+    // kompenzace: dlouhé 110kV vedení ztrácí 20 % kapacity, kondenzátor to spraví
+    const map2 = EG.generateMap(160, 42);
+    const sim2 = new EG.Sim(map2);
+    sim2.money = 1000000;
+    let a = null, b = null;
+    outer2:
+    for (let y = 0; y < map2.size; y++) for (let x = 0; x < map2.size; x++) {
+      if (!sim2.canPlace('sub', x, y).ok) continue;
+      if (!a) { a = sim2.place('sub', x, y); continue; }
+      const d = Math.hypot(x - a.x, y - a.y);
+      if (d >= 20 && d <= 26) { b = sim2.place('sub', x, y); break outer2; }
+    }
+    sim2.buyTrafo(a, 'c110'); sim2.buyTrafo(b, 'c110');
+    const longLine = sim2.connect(a, b, 110); // len > 16,8 = penalizace
+    sim2.tick(0.05);
+    const capPenalized = longLine.effCap;
+    sim2.buyCompensator(a);
+    sim2.tick(0.05);
+    const capFixed = longLine.effCap;
+    // kabel: plná kapacita bez kompenzace a 2,5× cena (na jiné hladině,
+    // ať nejde o posílení stávající 110kV trasy)
+    const cableLine = sim2.connect(a, b, 22, true); // 22 kV max 14 -> moc daleko
+    sim2.buyTrafo(a, 'c220'); sim2.buyTrafo(b, 'c220');
+    const m0 = sim2.money;
+    const cable220 = sim2.connect(a, b, 220, true);
+    const cablePaid = m0 - sim2.money;
+    const cablePlainCost = Math.ceil(cable220.len * EG.LINE_TYPES[220].cost);
+    sim2.tick(0.05);
+
+    // N-1 + frekvence: radiální síť = kritické vedení, smyčka = bez kritických
+    const map3 = EG.generateMap(160, 42);
+    const sim3 = new EG.Sim(map3);
+    sim3.money = 1000000;
+    const c = map3.cities[0];
+    let sD = null;
+    for (let dy = -3; dy <= 3 && !sD; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim3.canPlace('sub', c.x + dx, c.y + dy).ok) { sD = sim3.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim3.buyTrafo(sD, 't220_110'); sim3.buyTrafo(sD, 't110_22'); sim3.buyTrafo(sD, 't22_04');
+    sim3.tick(0.1);
+    const freqDark = sim3.freq; // nic nenapájeno -> pod 50
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim3.canPlace('coal', sD.x + dx, sD.y + dy).ok) { coal = sim3.place('coal', sD.x + dx, sD.y + dy); break; }
+    const radial = sim3.connect(coal, sD, 220);
+    for (let i = 0; i < 10; i++) sim3.tick(0.1);
+    const freqOk = sim3.freq;
+    const n1Radial = sim3.n1Report().critical;
+    sim3.connect(coal, sD, 220); // druhý systém nepomůže (stejná trasa)? posílení sdílí stožáry
+    let mid = null;
+    for (let r = 2; r <= 6 && !mid; r++)
+      for (let dy = -r; dy <= r && !mid; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim3.canPlace('sub', coal.x + dx, coal.y + dy).ok) { mid = sim3.place('sub', coal.x + dx, coal.y + dy); break; }
+    sim3.buyTrafo(mid, 'c220');
+    sim3.connect(coal, mid, 220);
+    sim3.connect(mid, sD, 220);
+    for (let i = 0; i < 5; i++) sim3.tick(0.1);
+    const n1Looped = sim3.n1Report().critical;
+
+    return {
+      far800Null: far800 === null, hvdcOk: !!hvdc, hvdcCap: hvdc && hvdc.cap,
+      fieldsFull, boughtBeforeLimit: bought, afterUpgrade,
+      capPenalized, capFixed,
+      cableShortRejected: cableLine === null, cableOk: !!cable220, cableFlag: cable220 && cable220.cable,
+      cablePricier: cablePaid > cablePlainCost * 2, cableFullCap: cable220 && cable220.effCap === 200,
+      freqDark: +freqDark.toFixed(2), freqOk: +freqOk.toFixed(2),
+      n1Radial, n1Looped,
+    };
+  });
+  console.log('síť B:', JSON.stringify(gridB));
+  if (!gridB.far800Null || !gridB.hvdcOk || gridB.hvdcCap !== 500) throw new Error('HVDC spojka nefunguje');
+  if (!gridB.fieldsFull || !gridB.afterUpgrade) throw new Error('pole rozvodny se nevynucují/nerozšiřují');
+  if (gridB.capPenalized !== 64 || gridB.capFixed !== 80) throw new Error('kompenzace jalového výkonu nefunguje: ' + gridB.capPenalized + '/' + gridB.capFixed);
+  if (!gridB.cableOk || !gridB.cableFlag || !gridB.cableFullCap) throw new Error('podzemní kabel nefunguje');
+  if (!(gridB.freqDark < 49.0) || !(gridB.freqOk > 49.8)) throw new Error('frekvence soustavy neodráží bilanci: ' + gridB.freqDark + '/' + gridB.freqOk);
+  if (!(gridB.n1Radial >= 1)) throw new Error('N-1 nenašla kritické radiální vedení');
+  if (gridB.n1Looped !== 0) throw new Error('N-1 hlásí kritická vedení i se zálohou: ' + gridB.n1Looped);
+
   // --- napájení ze dvou stran: zátěž se rozloží a nepřetěžuje jednu trasu ---
   const dispatch = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);
@@ -1327,7 +1430,7 @@ const server = http.createServer((req, res) => {
   });
   console.log('panel rozvodny:', JSON.stringify(subPanel));
   if (!subPanel.visible || !subPanel.title.includes('Rozvodna')) throw new Error('panel rozvodny se neotevřel: ' + subPanel.title);
-  if (subPanel.nBuyBtns !== 14) throw new Error('má být 8 typů traf + 6 propojovacích polí, je ' + subPanel.nBuyBtns);
+  if (subPanel.nBuyBtns !== 15) throw new Error('má být 9 typů traf (vč. HVDC měnírny) + 6 propojovacích polí, je ' + subPanel.nBuyBtns);
   if (subPanel.bought !== 1) throw new Error('nákup trafa přes UI nefunguje');
   if (!subPanel.levels.includes('110')) throw new Error('trafo nepřidalo 110kV přípojnici: ' + subPanel.levels);
   await page.waitForTimeout(250);
@@ -1464,8 +1567,9 @@ const server = http.createServer((req, res) => {
     const hiddenInPan = disp() === 'none';
     document.querySelector('.tool[data-tool="line"]').click();
     const visibleInLine = disp() !== 'none';
-    const nLevels = document.querySelectorAll('.linelvl').length;
-    const maxLens = [...document.querySelectorAll('.linelvl')].map((el) => {
+    const lvlBtns = [...document.querySelectorAll('.linelvl[data-level]')];
+    const nLevels = lvlBtns.length;
+    const maxLens = lvlBtns.map((el) => {
       const m = el.textContent.match(/max (\d+) dl/);
       return m ? +m[1] : null;
     });
@@ -1477,7 +1581,7 @@ const server = http.createServer((req, res) => {
   });
   console.log('paleta napětí:', JSON.stringify(linebar));
   if (!linebar.hiddenInPan || !linebar.visibleInLine || !linebar.hiddenAgain) throw new Error('paleta napětí se špatně schovává/ukazuje');
-  if (linebar.nLevels !== 7) throw new Error('má být 7 napěťových úrovní, je ' + linebar.nLevels);
+  if (linebar.nLevels !== 8) throw new Error('má být 8 napěťových úrovní (vč. HVDC), je ' + linebar.nLevels);
   if (!linebar.maxLensDiffer) throw new Error('každá úroveň má mít vlastní max. délku v popisku: ' + JSON.stringify(linebar.maxLens));
 
   // --- max. délky se u úrovní liší a vynucují se ---
@@ -1501,7 +1605,7 @@ const server = http.createServer((req, res) => {
     return { lens, unique: new Set(lens).size, far22Null: far22 === null, ok400: !!ok400 };
   });
   console.log('max. délky:', JSON.stringify(maxLen));
-  if (maxLen.unique !== 7) throw new Error('úrovně nemají rozdílné max. délky: ' + JSON.stringify(maxLen.lens));
+  if (maxLen.unique !== 8) throw new Error('úrovně nemají rozdílné max. délky: ' + JSON.stringify(maxLen.lens));
   if (!maxLen.far22Null) throw new Error('22 kV vedení delší než 14 dlaždic prošlo');
   if (!maxLen.ok400) throw new Error('400 kV vedení na stejnou vzdálenost neprošlo');
 

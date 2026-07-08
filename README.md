@@ -84,6 +84,15 @@ distribuční); **převádí obousměrně** – 400/220 funguje i jako zvyšovac
 Více kusů téhož typu sčítá kapacitu a přetížené trafo hlásí varování.
 Města se napájí z NN strany rozvodny.
 
+**HVDC 500 kV**: stejnosměrná spojka pro extrémní vzdálenosti (až 200
+dlaždic, 500 MW, minimální ztráty) – na obou koncích potřebuje drahou
+**měnírnu** (HVDC 500/400). **Podzemní kabel** (přepínač v paletě vedení)
+stojí 2,5×, ale odolá bouřkám, má nižší ztráty a netrpí na jalový výkon.
+Dlouhá střídavá vedení (přes 60 % max. délky) bez **kompenzace jalového
+výkonu** v rozvodně ztrácí 20 % kapacity. Každá rozvodna má omezený počet
+**polí** (vývodů: 6 + 3 za úroveň modernizace) a HUD nabízí **N-1 analýzu**
+(kritická vedení bez zálohy blikají) i ukazatel „frekvence" soustavy.
+
 K prodloužení trasy na stejné hladině slouží **propojovací pole**
 (800/800 … 11/11): levně přidá rozvodně přípojnici dané hladiny bez
 převodu, takže jde řetězit vedení přes průchozí (spínací) stanice.
