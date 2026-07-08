@@ -258,6 +258,8 @@
     for (const ind of m.industries || []) {
       if (ind.x === x && ind.y === y) return { ok: false, why: 'Průmyslový areál' };
     }
+    if (!this._rail) this._rail = new Set(m.railTiles || []);
+    if (this._rail.has(m.idx(x, y))) return { ok: false, why: 'Železniční trať' };
     const TT = T();
     switch (kind) {
       case 'hydro':
@@ -837,7 +839,13 @@
   Sim.prototype._industryDemand = function (ind, dayPhase) {
     if (ind.type === 'data') return ind.demand; // datacentrum jede 24/7 bez výkyvů
     const h = (6 + dayPhase * 24) % 24;
-    const shift = (ind.type === 'hut' || ind.type === 'chemicka')
+    if (ind.type === 'trakce') {
+      // vlaky: grafikon (noční útlum) + špičky projíždějících souprav
+      const day = (h >= 5 && h < 23) ? 1 : 0.25;
+      const pulse = Math.pow(Math.sin(this.time * 0.25 + (ind.x + ind.y) * 0.7) * 0.5 + 0.5, 3);
+      return ind.demand * day * (0.35 + 0.95 * pulse);
+    }
+    const shift = (ind.type === 'hut' || ind.type === 'chemicka' || ind.type === 'ocelarna')
       ? 0.85 + 0.15 * ((h >= 6 && h < 22) ? 1 : 0)
       : ((h >= 6 && h < 22) ? 1 : 0.3);
     // průmysl je na sezónu citlivý zhruba z poloviny oproti městům
@@ -1317,20 +1325,25 @@
       cityAssign.push({ city: c, sub: best, demand: d, served: 0 });
     }
 
-    // průmysl -> nejbližší rozvodna s VN přípojnicí (22 nebo 11 kV) v dosahu
+    // průmysl -> nejbližší rozvodna s VN přípojnicí (22/11 kV) v dosahu;
+    // vlaková trakce potřebuje 110 kV přípojnici
     const indAssign = [];
     for (const ind of this.map.industries || []) {
       const d = this._industryDemand(ind, dayPhase);
       totalDemand += d;
+      const wantLv = ind.type === 'trakce' ? [110] : [22, 11];
       let best = -1, bestD = Infinity, bestBus = -1, bestLv = 0;
       for (const si of subs) {
         const b = nodes[si];
         const dist = Math.hypot(b.x - ind.x, b.y - ind.y);
         if (dist > this.subRange(b) || dist >= bestD) continue;
-        const bus22 = busOf.get(si + ':22'), bus11 = busOf.get(si + ':11');
-        const bus = bus22 !== undefined ? bus22 : bus11;
-        if (bus === undefined) continue; // rozvodna bez VN trafa průmysl nenapojí
-        bestD = dist; best = si; bestBus = bus; bestLv = bus22 !== undefined ? 22 : 11;
+        let bus, lv;
+        for (const cand of wantLv) {
+          const v = busOf.get(si + ':' + cand);
+          if (v !== undefined) { bus = v; lv = cand; break; }
+        }
+        if (bus === undefined) continue; // rozvodna bez příslušné přípojnice nenapojí
+        bestD = dist; best = si; bestBus = bus; bestLv = lv;
       }
       indAssign.push({ ind, sub: best, bus: bestBus, level: bestLv, demand: d, served: 0 });
     }
@@ -1683,7 +1696,8 @@
         ind.downTime += dt;
         if (ind.downTime > 15 && !ind._warned) {
           ind._warned = true;
-          this.msg(ind.name + ' stojí bez proudu! (potřebuje VN přípojku z rozvodny)', 'warn', ind);
+          this.msg(ind.name + ' stojí bez proudu! (potřebuje ' +
+            (ind.type === 'trakce' ? '110kV' : 'VN') + ' přípojku z rozvodny)', 'warn', ind);
         }
       } else {
         ind.downTime = 0;
@@ -1945,6 +1959,7 @@
       type: u8ToB64(m.type),
       flow: u8ToB64(new Uint8Array(new Float32Array(m.flow).buffer)),
       cities: m.cities, industries: m.industries, geoFields: m.geoFields, crossings: m.crossings,
+      railways: m.railways, railTiles: m.railTiles,
       sim: {
         money: sim.money, time: sim.time, score: sim.score, debt: sim.debt || 0,
         blackouts: sim.blackouts, nextId: sim.nextId,
@@ -1963,6 +1978,8 @@
     map.industries = d.industries;
     map.geoFields = d.geoFields;
     map.crossings = d.crossings;
+    if (d.railways) map.railways = d.railways;
+    if (d.railTiles) map.railTiles = d.railTiles;
     const sim = new Sim(map);
     sim.buildings = d.sim.buildings;   // včetně přeshraničních bodů
     sim.lines = d.sim.lines;

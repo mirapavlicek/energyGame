@@ -126,7 +126,7 @@
 
     // --- města: na rovině, daleko od sebe, radši blízko řeky ---
     const cities = [];
-    const wanted = Math.round(11 * areaScale);
+    const wanted = Math.round(14 * areaScale); // hustší osídlení
     let attempts = 0;
     while (cities.length < wanted && attempts++ < 40000) {
       const x = 8 + Math.floor(rand() * (N - 16));
@@ -184,7 +184,8 @@
       { type: 'chemicka', label: 'Chemička', demand: [22, 40], names: ['Ústí', 'Zaluží', 'Semtín'] },
     ];
     const DATA_DEF = { type: 'data', label: 'Datacentrum', demand: [24, 34], names: ['Alfa', 'Beta', 'Gama', 'Delta'] };
-    const wantedInd = Math.round(6 * areaScale);
+    const STEEL_DEF = { type: 'ocelarna', label: 'Ocelárna', demand: [45, 70], names: ['Vítkovice', 'Kladno', 'Třinec'] };
+    const wantedInd = Math.round(9 * areaScale); // hustší průmysl
     let indAttempts = 0;
     while (industries.length < wantedInd && indAttempts++ < 60000) {
       const x = 6 + Math.floor(rand() * (N - 12));
@@ -207,7 +208,8 @@
         if (tt === T.HILL || tt === T.MOUNTAIN) nearHill = true;
         if (tt === T.RIVER) nearRiver = true;
       }
-      const def = hash2(x, y, seed + 55) < 0.15 ? DATA_DEF
+      const def = hash2(x, y, seed + 56) < 0.10 ? STEEL_DEF
+        : hash2(x, y, seed + 55) < 0.15 ? DATA_DEF
         : nearHill ? IND_DEFS[0]
         : nearRiver ? IND_DEFS[3]
         : nearForest ? IND_DEFS[2]
@@ -222,7 +224,7 @@
 
     // --- geotermální pole: vzácná místa pro geotermální elektrárny ---
     const geoFields = [];
-    const wantedGeo = Math.max(2, Math.round(3 * Math.sqrt(areaScale)));
+    const wantedGeo = Math.max(2, Math.round(4 * Math.sqrt(areaScale)));
     let geoTries = 0;
     while (geoFields.length < wantedGeo && geoTries++ < 8000) {
       const x = 6 + Math.floor(rand() * (N - 12));
@@ -253,7 +255,58 @@
       crossings.push({ x, y, name: X_NAMES[crossings.length % X_NAMES.length] });
     }
 
-    return { size: N, type, elev, flow, flowDir, cities, industries, crossings, geoFields, seed, T, idx };
+    // --- železniční koridory: spojují vzdálená města, trakční napájecí
+    //     stanice podél tratí jsou velcí odběratelé (napájení ze 110 kV) ---
+    const railways = [];
+    const railTiles = [];
+    const wantedRail = Math.max(2, Math.round(2 * Math.sqrt(areaScale)));
+    const usedCity = new Set();
+    for (let k = 0; k < wantedRail && cities.length >= 2; k++) {
+      let best = null, bd = -1;
+      for (let a = 0; a < cities.length; a++) for (let b = a + 1; b < cities.length; b++) {
+        if (usedCity.has(a) && usedCity.has(b)) continue;
+        const d = Math.abs(cities[a].x - cities[b].x) + Math.abs(cities[a].y - cities[b].y);
+        if (d > bd) { bd = d; best = [a, b]; }
+      }
+      if (!best || bd < 40) break;
+      usedCity.add(best[0]); usedCity.add(best[1]);
+      const A = cities[best[0]], B = cities[best[1]];
+      const path = [];
+      const steps = Math.ceil(Math.hypot(B.x - A.x, B.y - A.y));
+      const dx = B.x - A.x, dy = B.y - A.y, dl = Math.hypot(dx, dy) || 1;
+      const px = -dy / dl, py = dx / dl;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const wob = Math.sin(t * Math.PI * 3 + k * 1.7) * 4 * Math.sin(t * Math.PI); // u měst trať končí rovně
+        const x = Math.round(A.x + dx * t + px * wob);
+        const y = Math.round(A.y + dy * t + py * wob);
+        if (x < 1 || y < 1 || x >= N - 1 || y >= N - 1) continue;
+        if (path.length === 0 || path[path.length - 1][0] !== x || path[path.length - 1][1] !== y) path.push([x, y]);
+      }
+      if (path.length < 30) continue;
+      const koridor = String.fromCharCode(65 + railways.length);
+      const stations = [];
+      for (let i = 18; i < path.length - 14; i += 28) {
+        const [sx, sy] = path[i];
+        const t = type[idx(sx, sy)];
+        if (t === T.WATER || t === T.RIVER) continue;
+        if (cities.some((c) => Math.abs(c.x - sx) + Math.abs(c.y - sy) < 6)) continue;
+        const st = {
+          x: sx, y: sy, type: 'trakce',
+          name: 'Trakční stanice ' + koridor + (stations.length + 1),
+          demand: 14 + rand() * 14, powered: 0, downTime: 0,
+        };
+        stations.push(st);
+        industries.push(st);
+      }
+      railways.push({ name: 'Koridor ' + koridor, from: A.name, to: B.name, path });
+      for (const [x, y] of path) railTiles.push(y * N + x);
+    }
+
+    return {
+      size: N, type, elev, flow, flowDir, cities, industries, crossings, geoFields,
+      railways, railTiles, seed, T, idx,
+    };
   }
 
   const CITY_NAMES = [

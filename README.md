@@ -108,8 +108,13 @@ konec v rozvodně (výkon se vyvádí přes rozvodnu, jako v reálné soustavě)
 - Napájená a spokojená města **pomalu rostou** – přibývají obyvatelé i domy
   na mapě (čím větší město, tím pomalejší růst); při výpadcích se lidé stěhují
   pryč a zástavba se zmenšuje. Za dodanou energii města platí.
+- **Železnice**: mapu protínají koridory spojující vzdálená města; podél
+  tratí stojí **trakční napájecí stanice** (14–28 MW) – napájí se výhradně
+  ze **110kV přípojnice** rozvodny v dosahu a jejich odběr **pulzuje
+  s projíždějícími vlaky** (v noci útlum grafikonu). Na trati se nedá stavět.
 - **Průmysl je samostatný prvek**: na mapě se generují podniky (důl u kopců,
-  chemička u řeky, pila u lesa, jinde huť) s velkou vlastní spotřebou 8–48 MW.
+  chemička u řeky, pila u lesa, ocelárna 45–70 MW, jinde huť) s velkou
+  vlastní spotřebou 8–70 MW.
   Huť a chemička jedou nepřetržitě, důl a pila na denní směny. Průmysl se
   **napájí z VN přípojnice** (22 nebo 11 kV) rozvodny v dosahu – rozvodna bez
   VN trafa ho nenapojí – a platí o **40 % víc** za MWh než města. Podnik bez
@@ -207,7 +212,7 @@ Konkrétní mapu lze sdílet přes URL: `index.html?seed=123456`.
 
 ## Technika
 
-- **WebGL2** – celá scéna instancovaně: statický buffer terénu (~51 000 dlaždic
+- **WebGL2** – celá scéna instancovaně: statický buffer terénu (~104 000 dlaždic
   nahraných jednou), dynamický buffer budov/kurzorů, vedení jako instancované
   segmenty s animovanými „pakety" energie ve fragment shaderu.
 - **Sprite atlas** se generuje procedurálně do canvasu při startu – repozitář
