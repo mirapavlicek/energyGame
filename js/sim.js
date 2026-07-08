@@ -635,13 +635,13 @@
     if (!fd) return null;
     const missing = fd.cap - b.fuel;
     if (missing < 1) return 0;
-    return Math.ceil(missing * fd.price * (auto ? 1.15 : 1));
+    return Math.ceil(missing * fd.price * this.fuelPriceK(b) * (auto ? 1.15 : 1));
   };
 
   Sim.prototype.buyFuel = function (b, auto) {
     const fd = fuelDef(b);
     if (!fd) { this.msg('Tahle stavba palivo nepotřebuje', 'warn'); return false; }
-    const unitPrice = fd.price * (auto ? 1.15 : 1);
+    const unitPrice = fd.price * this.fuelPriceK(b) * (auto ? 1.15 : 1);
     const missing = fd.cap - b.fuel;
     if (missing < 1) { if (!auto) this.msg('Sklad paliva je plný', 'warn'); return false; }
     const affordable = Math.min(missing, Math.floor(this.money / unitPrice));
@@ -779,12 +779,16 @@
       // smíšené: pozvolný denní oblouk
       curve = 0.6 + 0.4 * Math.max(0, Math.sin((dayPhase - 0.2) * Math.PI * 2) * 0.5 + 0.5);
     }
+    // elektromobilita: s roky roste noční nabíjecí špička (22:00–06:00)
+    const ev = Math.min(0.25, 0.04 * (this.yearIdx || 0));
+    if (ev > 0 && (h >= 22 || h < 6)) curve += ev;
     return base * curve;
   };
 
   /* Poptávka podniku v MW – huť a chemička jedou nepřetržitě,
      důl a pila mají denní směny. */
   Sim.prototype._industryDemand = function (ind, dayPhase) {
+    if (ind.type === 'data') return ind.demand; // datacentrum jede 24/7 bez výkyvů
     const h = (6 + dayPhase * 24) % 24;
     const shift = (ind.type === 'hut' || ind.type === 'chemicka')
       ? 0.85 + 0.15 * ((h >= 6 && h < 22) ? 1 : 0)
@@ -825,6 +829,32 @@
     if (!best) return false;
     c.houses.push(best);
     return true;
+  };
+
+  /* --- úvěry: rychlé peníze za 10 % ročně; bankrot hru končí --- */
+  Sim.prototype.takeLoan = function (amount) {
+    amount = amount || 2000;
+    this.debt = (this.debt || 0) + amount;
+    this.money += amount;
+    this.msg('💳 Úvěr +' + amount + ' € (dluh ' + this.debt + ' €, úrok 10 %/rok)');
+    return true;
+  };
+
+  Sim.prototype.repayLoan = function (amount) {
+    const pay = Math.min(amount || 500, this.debt || 0, Math.max(0, Math.floor(this.money)));
+    if (pay < 1) { this.msg('Není co (nebo čím) splácet', 'warn'); return false; }
+    this.debt -= pay;
+    this.money -= pay;
+    this.msg('Splátka úvěru −' + pay + ' € (dluh ' + this.debt + ' €)');
+    return true;
+  };
+
+  /* roční cena paliva: tržní výkyvy ±15 % a emisní povolenky
+     (uhlí zdražuje 3 % ročně; biomasa je povolenek zproštěná) */
+  Sim.prototype.fuelPriceK = function (b) {
+    let k = this._fuelYearK || 1;
+    if (b.kind === 'coal' && !b.bioRetrofit) k *= Math.pow(1.03, this.yearIdx || 0);
+    return k;
   };
 
   /* --- N-1 analýza: přežije síť výpadek libovolného jednoho vedení? ---
@@ -975,6 +1005,59 @@
     return null;
   };
 
+  /* nový podnik se otevře, když průmysl běžel spolehlivě většinu roku */
+  Sim.prototype._maybeSpawnIndustry = function () {
+    const m = this.map;
+    if (this._indCount0 === undefined) this._indCount0 = (m.industries || []).length;
+    if ((m.industries || []).length >= this._indCount0 + 4) return;
+    const yearLen = this.dayLen * YEAR_DAYS;
+    if ((this._indGoodT || 0) < 0.6 * yearLen) return;
+    const spot = this._findIndustrySpot();
+    if (!spot) return;
+    const kinds = [
+      { type: 'hut', label: 'Huť', demand: 30 },
+      { type: 'pila', label: 'Pila', demand: 12 },
+      { type: 'data', label: 'Datacentrum', demand: 28 },
+    ];
+    const k = kinds[Math.floor(EG.rng.hash2(spot[0], spot[1], m.seed + 8) * kinds.length)];
+    m.industries.push({
+      x: spot[0], y: spot[1], type: k.type,
+      name: k.label + ' Nová' + (k.type === 'data' ? ' (24/7, přísné SLA)' : ''),
+      demand: k.demand, powered: 0, downTime: 0,
+    });
+    this.msg('🏗 Spolehlivá síť láká investory: otevírá se ' + k.label + ' u [' + spot[0] + ',' + spot[1] + ']!');
+  };
+
+  /* zakázka: připoj nový podnik do roka, odměna */
+  Sim.prototype._spawnMission = function () {
+    const spot = this._findIndustrySpot();
+    if (!spot) return;
+    const m = this.map;
+    const ind = {
+      x: spot[0], y: spot[1], type: 'hut', name: 'Zakázková huť',
+      demand: 32, powered: 0, downTime: 0,
+      mission: true, deadline: this.time + this.dayLen * YEAR_DAYS, reward: 1500,
+    };
+    m.industries.push(ind);
+    this.msg('📜 ZAKÁZKA: připoj „' + ind.name + '" [' + ind.x + ',' + ind.y + '] do roka – odměna 1 500 €!', 'warn');
+  };
+
+  Sim.prototype._findIndustrySpot = function () {
+    const m = this.map;
+    const TT = T();
+    for (let tries = 0; tries < 400; tries++) {
+      const x = 6 + Math.floor(EG.rng.hash2(tries * 3 + 1, (this.day || 1) + tries, m.seed + 9) * (m.size - 12));
+      const y = 6 + Math.floor(EG.rng.hash2(tries * 7 + 2, (this.day || 1) - tries, m.seed + 10) * (m.size - 12));
+      const t = m.type[m.idx(x, y)];
+      if (t === TT.WATER || t === TT.RIVER || t === TT.MOUNTAIN) continue;
+      if (this.buildingAt(x, y)) continue;
+      if (m.cities.some((c) => Math.abs(c.x - x) + Math.abs(c.y - y) < 12)) continue;
+      if ((m.industries || []).some((o) => Math.abs(o.x - x) + Math.abs(o.y - y) < 15)) continue;
+      return [x, y];
+    }
+    return null;
+  };
+
   Sim.prototype.activeEvents = function (type) {
     return (this.events || []).filter((e) => e.type === type && this.time >= e.start && this.time < e.until);
   };
@@ -1039,15 +1122,29 @@
 
     // suché a mokré roky: každý rok má vlastní hydrologii (0,75–1,25×)
     const yearIdx = Math.floor(this.time / yearLen);
+    this.yearIdx = yearIdx;
     if (this._hydroYearIdx !== yearIdx) {
       this._hydroYearIdx = yearIdx;
       this._hydroYearFx = 0.75 + 0.5 * EG.rng.hash2(yearIdx * 13 + 7, 3, this.map.seed);
+      this._fuelYearK = 0.85 + 0.3 * EG.rng.hash2(yearIdx * 7 + 3, 11, this.map.seed + 4);
       const f = this._hydroYearFx;
       this.msg('Hydrologická předpověď na rok ' + (yearIdx + 1) + ': ' +
         (f < 0.9 ? 'suchý rok' : f > 1.1 ? 'vodný rok' : 'průměrný rok') +
         ' (průtoky ' + (f >= 1 ? '+' : '') + Math.round((f - 1) * 100) + ' %)');
+      if (yearIdx > 0) {
+        this.msg('Trh s palivy: ceny ' + (this._fuelYearK >= 1 ? '+' : '') +
+          Math.round((this._fuelYearK - 1) * 100) + ' %, emisní povolenky zdražují uhlí o ' +
+          Math.round((Math.pow(1.03, yearIdx) - 1) * 100) + ' %');
+        // nové podniky jako odměna za spolehlivou síť
+        this._maybeSpawnIndustry();
+        // občasná zakázka velkoodběratele
+        if (EG.rng.hash2(yearIdx * 19 + 5, 13, this.map.seed + 6) < 0.5) this._spawnMission();
+      }
+      this._indGoodT = 0;
     }
     this.seasonFx.hydro *= this._hydroYearFx;
+    // elektrifikace vytápění: zimní spotřeba s roky roste (tepelná čerpadla)
+    this.seasonFx.demand += Math.min(0.15, 0.015 * yearIdx) * Math.max(0, cosAt(0.875));
 
     // slunce: půlvlna kolem 13:00, šířka podle sezónní délky dne; zatmění ho zhasne
     const h = (6 + dayPhase * 24) % 24;
@@ -1504,11 +1601,25 @@
       if (overloadedTrafos > 0) this.msg('Trafo přetíženo! Přikup další kus do rozvodny.', 'warn');
     }
 
-    // --- průmysl: stav napájení, hlášení odstávek ---
+    // --- průmysl: stav napájení, spolehlivost, zakázky, hlášení odstávek ---
+    let indPoweredSum = 0;
     for (const ia of indAssign) {
       const ind = ia.ind;
       const ratio = ia.demand > 0 ? ia.served / ia.demand : 0;
       ind.powered = ratio;
+      indPoweredSum += ratio;
+      // dlouhodobá spolehlivost dodávek ovlivňuje cenu, kterou podnik platí
+      ind.reliab = ind.reliab === undefined ? ratio : ind.reliab + (ratio - ind.reliab) * Math.min(1, dt / 60);
+      if (ind.mission) {
+        if (ratio > 0.9) {
+          this.money += ind.reward;
+          this.msg('📜 ZAKÁZKA SPLNĚNA: ' + ind.name + ' připojena, odměna +' + ind.reward + ' €!');
+          ind.mission = false;
+        } else if (this.time > ind.deadline) {
+          ind.mission = false;
+          this.msg('📜 Zakázka propadla: ' + ind.name + ' se nedočkala přípojky.', 'warn');
+        }
+      }
       if (ratio < 0.9) {
         ind.downTime += dt;
         if (ind.downTime > 15 && !ind._warned) {
@@ -1520,12 +1631,18 @@
         ind._warned = false;
       }
     }
+    // spolehlivý průmysl láká nové investory (vyhodnocuje se na Nový rok)
+    if (indAssign.length > 0 && indPoweredSum / indAssign.length > 0.95) {
+      this._indGoodT = (this._indGoodT || 0) + dt;
+    }
 
     // --- města: spokojenost, pomalý růst, výpadky ---
     for (const ca of cityAssign) {
       const c = ca.city;
       const ratio = ca.demand > 0 ? ca.served / ca.demand : 0;
       c.powered = ratio;
+      // prestiž: dlouhodobě spolehlivá města platí víc, zklamaná méně
+      c.reliab = c.reliab === undefined ? ratio : c.reliab + (ratio - c.reliab) * Math.min(1, dt / 60);
       if (ratio > 0.95) {
         c.satisfaction = Math.min(1, c.satisfaction + dt * 0.02);
         c.unhappyTime = 0;
@@ -1636,17 +1753,60 @@
       }
     }
 
-    // průmysl platí za MWh o 40 % víc než města
-    const income = (delivered - indDelivered) * PRICE_PER_MWH + indDelivered * PRICE_PER_MWH * 1.4
-      + xIncome - xCost - xPenalty;
-    this.money += (income - upkeep * 0.01) * dt;
-    this.score += (delivered + exported) * dt * 0.01;
-
-    // „frekvence soustavy": bilance PŘIPOJENÝCH odběrů (50 Hz při plné dodávce);
-    // města bez rozvodny v dosahu soustavu netáhnou dolů – nejsou v ní
+    // --- spotová cena: napjatá soustava zdražuje, přebytek zlevňuje ---
     let connectedDemand = 0;
     for (const ca of cityAssign) if (ca.sub >= 0) connectedDemand += ca.demand;
     for (const ia of indAssign) if (ia.bus >= 0) connectedDemand += ia.demand;
+    let totAvail = 0;
+    for (let i = 0; i < n; i++) if (genBus[i] >= 0) totAvail += wantGen[i];
+    this.spotK = Math.max(0.7, Math.min(1.6, 0.75 + 0.5 * (connectedDemand / Math.max(1, totAvail))));
+    const spot = PRICE_PER_MWH * this.spotK;
+
+    // města a průmysl platí spotovou cenu × dlouhodobou spolehlivost (prestiž);
+    // datacentra platí dvojnásobek průmyslu, ale za nespolehlivost sankcionují
+    let cityIncome = 0, indIncome = 0, dataPenalty = 0;
+    for (const ca of cityAssign) {
+      if (ca.sub < 0) continue;
+      cityIncome += ca.served * spot * (0.85 + 0.3 * (ca.city.reliab !== undefined ? ca.city.reliab : 1));
+    }
+    for (const ia of indAssign) {
+      if (ia.sub < 0) continue;
+      const ind = ia.ind;
+      if (ind.type === 'data') {
+        indIncome += ia.served * spot * 2.8;
+        if (ia.demand > 0 && ia.served / ia.demand < 0.99) dataPenalty += ia.demand * 0.02;
+      } else {
+        indIncome += ia.served * spot * 1.4 * (0.85 + 0.3 * (ind.reliab !== undefined ? ind.reliab : 1));
+      }
+    }
+
+    // kapacitní platby: pohotová záloha klasických zdrojů (nevyužitý výkon)
+    let reservePay = 0;
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      if ((b.kind === 'coal' || b.kind === 'gas' || b.kind === 'nuclear') &&
+          !b.mothball && !b.broken && (b.fuel === undefined || b.fuel > 0)) {
+        reservePay += Math.max(0, wantGen[i] - gen[i]) * 0.004;
+      }
+    }
+
+    // inflace provozních nákladů (2 % ročně) a úrok z úvěru (10 % ročně)
+    const inflK = Math.pow(1.02, this.yearIdx || 0);
+    const interest = (this.debt || 0) * 0.10 / yearLenS;
+
+    const income = cityIncome + indIncome + reservePay
+      + xIncome - xCost - xPenalty - dataPenalty - interest;
+    this.money += (income - upkeep * inflK * 0.01) * dt;
+    this.score += (delivered + exported) * dt * 0.01;
+
+    // bankrot: hluboko v minusu hra končí
+    if (this.money < -2000 && !this.gameOver) {
+      this.gameOver = true;
+      this.msg('💀 BANKROT! Dluhy přerostly únosnou mez – hra končí. (Nová mapa = nový začátek.)', 'warn');
+    }
+
+    // „frekvence soustavy": bilance PŘIPOJENÝCH odběrů (50 Hz při plné dodávce);
+    // města bez rozvodny v dosahu soustavu netáhnou dolů – nejsou v ní
     const ratioAll = connectedDemand > 0 ? delivered / connectedDemand : 1;
     this.freq = 50 - 1.5 * (1 - Math.min(1, ratioAll));
 
@@ -1654,10 +1814,11 @@
       produced, delivered, indDelivered, demand: totalDemand,
       losses: totalLoss,
       exported, imported, xPenalty,
+      spot, spotK: this.spotK, reservePay, dataPenalty,
       overloaded, overloadedTrafos,
       unpowered: cityAssign.filter((ca) => (ca.demand > 0 && (ca.served / ca.demand) < 0.5)).length +
         indAssign.filter((ia) => (ia.demand > 0 && (ia.served / ia.demand) < 0.5)).length,
-      income: income - upkeep * 0.01,
+      income: income - upkeep * inflK * 0.01,
     };
     this.cityAssign = cityAssign;
     this.indAssign = indAssign;

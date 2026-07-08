@@ -17,11 +17,15 @@
       <span class="hud-item" title="Dodávka / poptávka">⚡ <b id="power">0 / 0 MW</b></span>
       <span class="hud-item" title="Ztráty na vedení (kryje je výroba navíc)">〰 <b id="losses">0 MW</b></span>
       <span class="hud-item" title="Bilance příjmů">💰 <b id="income">+0/min</b></span>
+      <span class="hud-item" title="Spotová cena elektřiny (napjatost soustavy)">💱 <b id="spot">1.00×</b></span>
+      <span class="hud-item" id="debt-item" title="Dluh (úrok 10 %/rok)" hidden>💳 <b id="debt">0 €</b></span>
       <span class="hud-item" title="Skóre">★ <b id="score">0</b></span>
       <span class="hud-item" id="clock">06:00</span>
     </div>
     <div class="hud-group">
       <span class="hud-item" title="Frekvence soustavy (bilance)">〜 <b id="freq">50.0 Hz</b></span>
+      <button id="btn-loan" class="hud-btn" title="Vzít úvěr +2000 € (úrok 10 %/rok)">💳 +2000</button>
+      <button id="btn-repay" class="hud-btn" title="Splatit 500 € z úvěru">Splatit</button>
       <button id="btn-n1" class="hud-btn" title="N-1 analýza: přežije síť výpadek libovolného jednoho vedení?">N-1</button>
       <button id="btn-speed" class="hud-btn">▶ 1×</button>
       <button id="btn-newmap" class="hud-btn" title="Vygeneruje novou náhodnou mapu">Nová mapa</button>
@@ -35,6 +39,11 @@
   <div id="hover-info"></div>
   <div id="log"></div>
   <canvas id="minimap" title="Klikni pro přesun kamery"></canvas>
+
+  <div id="gameover" hidden>
+    <div>💀 BANKROT</div>
+    <p>Dluhy přerostly únosnou mez. Zkus to znovu – tlačítkem „Nová mapa".</p>
+  </div>
 
   <div id="bpanel" hidden>
     <div id="bp-head">

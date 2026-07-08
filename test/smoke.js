@@ -723,6 +723,101 @@ const server = http.createServer((req, res) => {
   if (sources.bioName !== 'štěpka' || sources.bioGen !== 70) throw new Error('retrofit na biomasu nefunguje: ' + sources.bioName + '/' + sources.bioGen);
   if (sources.maxLevel !== 5 || sources.multL5 !== 1.8) throw new Error('5 úrovní modernizace nefunguje');
 
+  // --- ekonomika D: spot, prestiž, úvěry, rezerva, inflace, mise, EV, data ---
+  const econ = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 5000;
+    const c = map.cities[0];
+    let sub = null;
+    for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+    sim.tick(0.1);
+    const spotTight = sim.spotK;          // žádná výroba -> drahá elektřina
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.connect(coal, sub, 220);
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const spotOk = sim.spotK;             // přebytek -> levnější
+    const reservePay = sim.stats.reservePay; // uhelná jede částečně -> záloha placená
+
+    // prestiž: výpadek srazí reliab i cenu
+    c.reliab = 1; // dlouhodobě spolehlivé město
+    const reliabBefore = c.reliab;
+    coal.fuel = 0;
+    for (let i = 0; i < 300; i++) sim.tick(0.1);
+    const reliabAfter = c.reliab;
+    sim.money = 5000; sim.buyFuel(coal);
+
+    // úvěr a splátka
+    const m0 = sim.money;
+    sim.takeLoan(2000);
+    const loanOk = sim.money === m0 + 2000 && sim.debt === 2000;
+    sim.repayLoan(500);
+    const repayOk = sim.debt === 1500;
+
+    // roční ceny paliva a emisní povolenky
+    const k0 = sim.fuelPriceK(coal);
+    sim.yearIdx = 5;
+    const k5 = sim.fuelPriceK(coal);
+    sim.retrofitBiomass(coal);
+    const k5bio = sim.fuelPriceK(coal);
+    sim.yearIdx = 0;
+
+    // elektromobilita: v roce 6 je noční odběr vyšší než v roce 0
+    const nightPhase = (2 - 6 + 24) / 24; // 02:00
+    const d0 = sim._cityDemand(c, nightPhase);
+    sim.yearIdx = 6;
+    const d6 = sim._cityDemand(c, nightPhase);
+    sim.yearIdx = 0;
+
+    // datacentrum: plochý odběr 24/7
+    const dataInd = { type: 'data', demand: 30 };
+    const dataFlat = sim._industryDemand(dataInd, 0.29) === 30 && sim._industryDemand(dataInd, 0.8) === 30;
+
+    // zakázka a nové podniky
+    const nInd0 = map.industries.length;
+    sim._spawnMission();
+    const missionInd = map.industries.find((o) => o.mission);
+    missionInd.deadline = sim.time - 1; // propadne
+    sim.tick(0.1);
+    const missionExpired = !missionInd.mission;
+    sim._indGoodT = 1e9;
+    sim._maybeSpawnIndustry();
+    const spawned = map.industries.length === nInd0 + 2;
+
+    // bankrot
+    sim.money = -2500;
+    sim.tick(0.1);
+    const bankrupt = sim.gameOver === true;
+
+    return {
+      spotTight: +spotTight.toFixed(2), spotOk: +spotOk.toFixed(2),
+      reservePay: +(reservePay || 0).toFixed(2),
+      reliabDropped: reliabAfter < reliabBefore - 0.2,
+      loanOk, repayOk,
+      k0: +k0.toFixed(3), k5: +k5.toFixed(3), co2Works: k5 > k0 * 1.1, bioExempt: k5bio < k5,
+      evWorks: d6 > d0 * 1.1,
+      dataFlat,
+      missionSpawned: !!missionInd, missionExpired, spawned,
+      bankrupt,
+    };
+  });
+  console.log('ekonomika D:', JSON.stringify(econ));
+  if (!(econ.spotTight > 1.4) || !(econ.spotOk < 1.1)) throw new Error('spotová cena nereaguje: ' + econ.spotTight + '/' + econ.spotOk);
+  if (!(econ.reservePay > 0)) throw new Error('kapacitní platby za zálohu nefungují');
+  if (!econ.reliabDropped) throw new Error('prestiž měst nereaguje na výpadky');
+  if (!econ.loanOk || !econ.repayOk) throw new Error('úvěry nefungují');
+  if (!econ.co2Works || !econ.bioExempt) throw new Error('emisní povolenky nefungují: ' + econ.k0 + '/' + econ.k5);
+  if (!econ.evWorks) throw new Error('elektromobilita nezvedá noční odběr');
+  if (!econ.dataFlat) throw new Error('datacentrum nemá plochý odběr');
+  if (!econ.missionSpawned || !econ.missionExpired || !econ.spawned) throw new Error('zakázky/nové podniky nefungují');
+  if (!econ.bankrupt) throw new Error('bankrot se nevyhlašuje');
+
   // --- události a počasí: bouřka, vedra, zatmění, povodeň, kůrovec, dotace ---
   const eventsT = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);

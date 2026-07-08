@@ -66,6 +66,8 @@
       location.search = '?seed=' + ((Math.random() * 1e9) | 0);
     });
     $('#btn-n1').addEventListener('click', () => sim.n1Report());
+    $('#btn-loan').addEventListener('click', () => sim.takeLoan(2000));
+    $('#btn-repay').addEventListener('click', () => sim.repayLoan(500));
 
     setupInput(canvas);
     setupToolbar();
@@ -917,6 +919,16 @@
     $('#losses').style.color = (st.losses || 0) > 0.15 * Math.max(1, st.delivered) ? '#ff6a5a' : '';
     $('#freq').textContent = (sim.freq || 50).toFixed(1) + ' Hz';
     $('#freq').style.color = (sim.freq || 50) < 49.5 ? '#ff6a5a' : (sim.freq || 50) < 49.9 ? '#f0c040' : '';
+
+    $('#spot').textContent = (sim.spotK || 1).toFixed(2) + '×';
+    $('#spot').style.color = (sim.spotK || 1) > 1.25 ? '#f0c040' : '';
+    $('#debt-item').hidden = !(sim.debt > 0);
+    if (sim.debt > 0) $('#debt').textContent = Math.round(sim.debt).toLocaleString('cs-CZ') + ' €';
+    if (sim.gameOver && $('#gameover').hidden) {
+      $('#gameover').hidden = false;
+      speed = 0;
+      updateSpeedLabel();
+    }
 
     // tónování scény: noc ztmavuje, bouřka přidává těžké mraky
     const night = Math.max(0, 0.38 * (1 - Math.min(1, (sim.sun || 0) * 3)));
