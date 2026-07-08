@@ -92,8 +92,9 @@
      Vyšší napětí = větší kapacita, delší trasy a menší ztráty, ale dražší dlaždice.
      `loss` je podíl ztrát na dlaždici délky při plném zatížení; skutečná ztráta
      roste kvadraticky s tokem (I²R): P_ztr = |P|·(|P|/cap)·loss·délka. */
-  const LEVELS = [800, 400, 220, 110, 22, 11, 0.4];
+  const LEVELS = [800, 500, 400, 220, 110, 22, 11, 0.4];
   const LINE_TYPES = {
+    500: { name: 'HVDC 500 kV', cls: 'HVDC', cap: 500, cost: 28, maxLen: 200, loss: 0.0006 },
     800: { name: 'VVN 800 kV', cls: 'VVN', cap: 800, cost: 34, maxLen: 60, loss: 0.0016 },
     400: { name: 'VVN 400 kV', cls: 'VVN', cap: 400, cost: 20, maxLen: 48, loss: 0.0020 },
     220: { name: 'VVN 220 kV', cls: 'VVN', cap: 200, cost: 11, maxLen: 36, loss: 0.0026 },
@@ -150,6 +151,7 @@
      Propojovací pole (110/110 apod.) nepřevádí – jen přidá přípojnici
      dané hladiny, aby šla trasa prodloužit dalším vedením. */
   const TRAFOS = {
+    thvdc: { hi: 500, lo: 400, cap: 500, cost: 800, name: 'HVDC měnírna 500/400' },
     t800_400: { hi: 800, lo: 400, cap: 600, cost: 700, name: '800⇄400 kV' },
     t400_220: { hi: 400, lo: 220, cap: 350, cost: 420, name: '400⇄220 kV' },
     t400_110: { hi: 400, lo: 110, cap: 250, cost: 380, name: '400⇄110 kV' },
@@ -420,11 +422,41 @@
     if (b.kind !== 'sub') { this.msg('Trafo lze koupit jen do rozvodny', 'warn'); return false; }
     const t = TRAFOS[key];
     if (!t) return false;
+    if (this.fieldsUsed(b) >= this.fieldLimit(b)) {
+      this.msg('Rozvodna nemá volné pole (' + this.fieldLimit(b) + ') – modernizuj ji', 'warn');
+      return false;
+    }
     if (this.money < t.cost) { this.msg('Nedostatek peněz na trafo', 'warn'); return false; }
     this.money -= t.cost;
     b.trafos[key] = (b.trafos[key] || 0) + 1;
     this.msg((t.coupler ? 'Propojovací pole ' : 'Trafo ') + t.name + ' instalováno (−' + t.cost + ')');
     return true;
+  };
+
+  /* kompenzace jalového výkonu: bez ní dlouhá střídavá vedení (přes 60 %
+     max. délky hladiny) ztrácí 20 % kapacity; kondenzátorová baterie
+     v rozvodně na jednom z konců penalizaci ruší */
+  Sim.prototype.buyCompensator = function (b) {
+    if (b.kind !== 'sub') { this.msg('Kompenzace patří do rozvodny', 'warn'); return false; }
+    if (b.compensator) { this.msg('Kompenzace už je instalovaná', 'warn'); return false; }
+    const cost = 90;
+    if (this.money < cost) { this.msg('Nedostatek peněz na kompenzaci', 'warn'); return false; }
+    this.money -= cost;
+    b.compensator = true;
+    this.msg('Kondenzátorová baterie instalována – dlouhá vedení bez penalizace (−' + cost + ')');
+    return true;
+  };
+
+  /* pole rozvodny: každé vedení a trafo zabírá jedno pole; kapacita roste
+     s modernizací rozvodny (6 / 9 / 12 / 15 / 18) */
+  Sim.prototype.fieldLimit = function (b) {
+    return 6 + 3 * ((b.level || 1) - 1);
+  };
+
+  Sim.prototype.fieldsUsed = function (b) {
+    let used = this.lines.filter((l) => l.a === b.id || l.b === b.id).length;
+    for (const count of Object.values(b.trafos || {})) used += count;
+    return used;
   };
 
   /* regulační trafo: přepínač odboček – umožní tok trafem posílit či škrtit */
@@ -454,7 +486,7 @@
 
   /* level = napěťová úroveň (klíč LINE_TYPES); bez udání se vybere
      nejvyšší úroveň, kterou podporují obě stavby */
-  Sim.prototype.connect = function (b1, b2, level) {
+  Sim.prototype.connect = function (b1, b2, level, cable) {
     if (b1 === b2) return null;
     // elektrárny (ani zásobníky či hraniční body) se neřetězí napřímo –
     // výkon se vždy vyvádí přes rozvodnu
@@ -491,12 +523,23 @@
       this.msg(LT.name + ': posíleno na ' + existing.n + '× (kapacita ' + existing.cap + ' MW, −' + cost + ')');
       return existing;
     }
-    const cost = Math.ceil(dist * LT.cost);
+    // volná pole rozvodny (jen nová linka, posílení pole nezabírá)
+    for (const b of [b1, b2]) {
+      if (b.kind === 'sub' && this.fieldsUsed(b) >= this.fieldLimit(b)) {
+        this.msg('Rozvodna [' + b.x + ',' + b.y + '] nemá volné pole (' + this.fieldLimit(b) +
+          ') – modernizuj ji', 'warn');
+        return null;
+      }
+    }
+    const cost = Math.ceil(dist * LT.cost * (cable ? 2.5 : 1));
     if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
     this.money -= cost;
-    const l = { id: this.nextId++, a: b1.id, b: b2.id, level, n: 1, cap: LT.cap, flow: 0, load: 0, len: dist };
+    const l = {
+      id: this.nextId++, a: b1.id, b: b2.id, level, n: 1, cap: LT.cap,
+      cable: !!cable, flow: 0, load: 0, len: dist,
+    };
     this.lines.push(l);
-    this.msg(LT.name + ' nataženo (−' + cost + ')');
+    this.msg(LT.name + (cable ? ' (podzemní kabel)' : '') + ' nataženo (−' + cost + ')');
     return l;
   };
 
@@ -779,6 +822,71 @@
     return true;
   };
 
+  /* --- N-1 analýza: přežije síť výpadek libovolného jednoho vedení? ---
+     Konektivitní odhad: pro každé vedení se spočítá bilance komponent bez
+     něj; kritická jsou vedení, jejichž výpadek připraví odběratele
+     o víc než 10 % dodávky. */
+  Sim.prototype.n1Report = function () {
+    const nodes = this.buildings;
+    const id2i = new Map();
+    nodes.forEach((b, i) => id2i.set(b.id, i));
+    const critical = [];
+    const balanceWithout = (skipLine) => {
+      // sjednotit busy přes union-find
+      const parent = new Map();
+      const find = (k) => { let r = k; while (parent.get(r) !== r) r = parent.get(r); parent.set(k, r); return r; };
+      const uni = (a, b) => { parent.set(find(a), find(b)); };
+      const key = (i, lv) => i + ':' + lv;
+      for (let i = 0; i < nodes.length; i++) {
+        for (const lv of this.levelsOf(nodes[i])) { const k = key(i, lv); if (!parent.has(k)) parent.set(k, k); }
+      }
+      for (const l of this.lines) {
+        if (l === skipLine) continue;
+        const a = id2i.get(l.a), b = id2i.get(l.b);
+        if (a === undefined || b === undefined) continue;
+        if (parent.has(key(a, l.level)) && parent.has(key(b, l.level))) uni(key(a, l.level), key(b, l.level));
+      }
+      for (let i = 0; i < nodes.length; i++) {
+        const b = nodes[i];
+        if (b.kind !== 'sub' || b.broken) continue;
+        for (const [tk, count] of Object.entries(b.trafos || {})) {
+          if (!count || TRAFOS[tk].coupler) continue;
+          uni(key(i, TRAFOS[tk].hi), key(i, TRAFOS[tk].lo));
+        }
+      }
+      const gen = new Map(), dem = new Map();
+      for (let i = 0; i < nodes.length; i++) {
+        const b = nodes[i];
+        if (b.kind !== 'sub' && GEN_LEVEL[b.kind] !== undefined && !STORAGE[b.kind]) {
+          const r = find(key(i, GEN_LEVEL[b.kind]));
+          gen.set(r, (gen.get(r) || 0) + (b.gen || 0));
+        }
+      }
+      const addDem = (i, lv, d) => { const r = find(key(i, lv)); dem.set(r, (dem.get(r) || 0) + d); };
+      for (const ca of this.cityAssign || []) if (ca.sub >= 0) addDem(ca.sub, 0.4, ca.demand);
+      for (const ia of this.indAssign || []) if (ia.sub >= 0) addDem(ia.sub, ia.level, ia.demand);
+      for (const xa of this.xAssign || []) if (xa.bus >= 0) addDem(xa.bi, 400, xa.demand);
+      let served = 0, total = 0;
+      for (const [r, d] of dem) {
+        total += d;
+        served += Math.min(d, gen.get(r) || 0);
+      }
+      return total > 0 ? served / total : 1;
+    };
+    const base = balanceWithout(null);
+    for (const l of this.lines) {
+      if (balanceWithout(l) < base - 0.1) critical.push(l);
+    }
+    this._n1Critical = new Set(critical.map((l) => l.id));
+    this._n1Until = this.time + 12;
+    if (critical.length === 0) {
+      this.msg('N-1: síť přežije výpadek libovolného vedení ✓');
+    } else {
+      this.msg('N-1: ' + critical.length + ' kritických vedení (blikají) – dostav zálohy!', 'warn');
+    }
+    return { checked: this.lines.length, critical: critical.length };
+  };
+
   /* hlavní tick simulace – dt v herních sekundách */
   Sim.prototype.tick = function (dt) {
     this.time += dt;
@@ -856,6 +964,13 @@
       const b = bi === undefined ? undefined : busOf.get(bi + ':' + l.level);
       l.flow = 0; l.load = 0; l.loss = 0;
       if (a === undefined || b === undefined) continue;
+      // jalový výkon: dlouhé střídavé vedení bez kompenzace ztrácí 20 % kapacity
+      l.effCap = l.cap;
+      if (!l.cable && l.level !== 500 && l.len > LINE_TYPES[l.level].maxLen * 0.6) {
+        const aC = nodes[ai], bC = nodes[bi];
+        const compensated = (aC.kind === 'sub' && aC.compensator) || (bC.kind === 'sub' && bC.compensator);
+        if (!compensated) l.effCap = l.cap * 0.8;
+      }
       // delší vedení = větší „odpor", paralelní systémy vodivost násobí
       edges.push({ a, b, w: (l.n || 1) / Math.max(1, l.len * 0.25), line: l });
     }
@@ -1074,7 +1189,8 @@
       if (!e.line) continue;
       const l = e.line;
       const flow = (theta[e.a] - theta[e.b]) * e.w;
-      const loss = Math.abs(flow) * (Math.abs(flow) / l.cap) * LINE_TYPES[l.level].loss * l.len;
+      const cableK = l.cable ? 0.7 : 1; // kabel má nižší ztráty
+      const loss = Math.abs(flow) * (Math.abs(flow) / (l.effCap || l.cap)) * LINE_TYPES[l.level].loss * l.len * cableK;
       l.loss = loss;
       lossAt[e.a] += loss / 2;
       lossAt[e.b] += loss / 2;
@@ -1191,7 +1307,7 @@
         const flow = (theta[e.a] - theta[e.b]) * e.w;
         if (e.line) {
           e.line.flow = flow;
-          e.line.load = Math.abs(flow) / e.line.cap;
+          e.line.load = Math.abs(flow) / (e.line.effCap || e.line.cap);
           if (e.line.load > 1) overloaded++;
         } else {
           const load = Math.abs(flow) / e.trafo.cap;
@@ -1363,6 +1479,14 @@
       + xIncome - xCost - xPenalty;
     this.money += (income - upkeep * 0.01) * dt;
     this.score += (delivered + exported) * dt * 0.01;
+
+    // „frekvence soustavy": bilance PŘIPOJENÝCH odběrů (50 Hz při plné dodávce);
+    // města bez rozvodny v dosahu soustavu netáhnou dolů – nejsou v ní
+    let connectedDemand = 0;
+    for (const ca of cityAssign) if (ca.sub >= 0) connectedDemand += ca.demand;
+    for (const ia of indAssign) if (ia.bus >= 0) connectedDemand += ia.demand;
+    const ratioAll = connectedDemand > 0 ? delivered / connectedDemand : 1;
+    this.freq = 50 - 1.5 * (1 - Math.min(1, ratioAll));
 
     this.stats = {
       produced, delivered, indDelivered, demand: totalDemand,

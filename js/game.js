@@ -11,11 +11,13 @@
   let tool = 'pan';            // pan | hydro | dam | coal | solar | wind | sub | line | demolish
   let lineFrom = null;         // budova, odkud táhneme vedení
   let lineLevel = 110;         // zvolená napěťová úroveň vedení
+  let lineCable = false;       // stavět jako podzemní kabel (2,5× cena)
   let selected = null;         // budova otevřená v panelu správy
   let hoverF = [0, 0];         // přesná pozice kurzoru v dlaždicích (trefa na vedení)
 
   /* barvy vedení podle napěťové úrovně */
   const LEVEL_COLOR = {
+    500: [1.00, 0.35, 0.75], // HVDC
     800: [0.83, 0.45, 1.00],
     400: [1.00, 0.72, 0.20],
     220: [0.35, 0.78, 0.95],
@@ -63,6 +65,7 @@
     $('#btn-newmap').addEventListener('click', () => {
       location.search = '?seed=' + ((Math.random() * 1e9) | 0);
     });
+    $('#btn-n1').addEventListener('click', () => sim.n1Report());
 
     setupInput(canvas);
     setupToolbar();
@@ -180,7 +183,7 @@
         return;
       }
       if (!lineFrom) { lineFrom = b; sim.msg('Vyber cílovou stavbu (' + EG.LINE_TYPES[lineLevel].name + ')'); return; }
-      sim.connect(lineFrom, b, lineLevel);
+      sim.connect(lineFrom, b, lineLevel, lineCable);
       lineFrom = b; // řetězení vedení
       return;
     }
@@ -248,6 +251,18 @@
       el.addEventListener('click', () => setLineLevel(lv));
       bar.appendChild(el);
     }
+    // přepínač podzemního kabelu
+    const cbl = document.createElement('button');
+    cbl.className = 'linelvl';
+    cbl.id = 'btn-cable';
+    cbl.innerHTML = '<span class="swatch" style="background:#4a3b2a"></span>Podzemní kabel<span class="cost">2,5× cena</span>';
+    cbl.title = 'Kabel je dražší, ale odolá bouřkám, má nižší ztráty a netrpí na jalový výkon.';
+    cbl.addEventListener('click', () => {
+      lineCable = !lineCable;
+      cbl.classList.toggle('active', lineCable);
+      sim.msg('Vedení se staví jako ' + (lineCable ? 'podzemní kabel (2,5×)' : 'venkovní linka'));
+    });
+    bar.appendChild(cbl);
     document.querySelector('.linelvl[data-level="110"]').classList.add('active');
   }
 
@@ -539,6 +554,12 @@
       rng.id = 'bp-btn-rng';
       rng.title = 'Zvětší dosah rozvodny k městům o 2 dlaždice.';
 
+      if (!b.compensator) {
+        const comp = bpButton('🔋 Kompenzace jalového výkonu <span class="cost">−90</span>', '',
+          () => sim.buyCompensator(b));
+        comp.title = 'Kondenzátorová baterie: dlouhá střídavá vedení z této rozvodny neztrácí 20 % kapacity.';
+      }
+
       // --- trafa: instalovaná + nákup + regulace (přepínač odboček) ---
       const sec = document.createElement('div');
       sec.className = 'bp-sec';
@@ -632,7 +653,9 @@
     if (b.kind === 'sub') {
       rows += 'Přípojnice: <span class="val">' +
         sim.levelsOf(b).map((lv) => EG.LINE_TYPES[lv].name.replace(/^(VVN|VN|NN) /, '')).join(', ') + '</span><br>';
-      rows += 'Dosah NN: <span class="val">' + sim.subRange(b) + ' dlaždic</span><br>';
+      rows += 'Dosah NN: <span class="val">' + sim.subRange(b) + ' dlaždic</span> · pole: <span class="val">' +
+        sim.fieldsUsed(b) + ' / ' + sim.fieldLimit(b) + '</span><br>';
+      if (b.compensator) rows += 'Kompenzace jalového výkonu: <span class="val">✓</span><br>';
       rows += 'Odběr přes rozvodnu: <span class="val">' +
         (sim.cityAssign || []).filter((ca) => ca.sub >= 0 && sim.buildings[ca.sub] === b)
           .reduce((s, ca) => s + ca.served, 0).toFixed(0) + ' MW</span><br>';
@@ -891,6 +914,8 @@
     $('#power').className = st.demand > 0 && st.delivered / st.demand < 0.7 ? 'bad' : (st.delivered / Math.max(1, st.demand) < 0.98 ? 'warn' : '');
     $('#losses').textContent = (st.losses || 0).toFixed(1) + ' MW';
     $('#losses').style.color = (st.losses || 0) > 0.15 * Math.max(1, st.delivered) ? '#ff6a5a' : '';
+    $('#freq').textContent = (sim.freq || 50).toFixed(1) + ' Hz';
+    $('#freq').style.color = (sim.freq || 50) < 49.5 ? '#ff6a5a' : (sim.freq || 50) < 49.9 ? '#f0c040' : '';
     $('#income').textContent = (st.income >= 0 ? '+' : '') + (st.income * 60).toFixed(1) + '/min';
     $('#score').textContent = Math.floor(sim.score).toLocaleString('cs-CZ');
     const ph = sim.dayPhase || 0;
@@ -925,13 +950,19 @@
       if (l.load > 1) { r = 0.95; g = 0.2; bl = 0.15; }
       else if (l.load > 0.75) { r = 0.95; g = 0.6; bl = 0.1; }
       const dir = l.flow > 0.5 ? 1 : (l.flow < -0.5 ? -1 : 0);
+      // N-1 analýza: kritická vedení blikají bíle
+      if (sim._n1Critical && sim._n1Until > sim.time && sim._n1Critical.has(l.id)) {
+        const bl2 = (Math.sin(performance.now() * 0.012) + 1) / 2;
+        r = 0.6 + 0.4 * bl2; g = 0.6 + 0.4 * bl2; bl = 0.9;
+      }
+      const alpha = l.cable ? 0.55 : 0.95; // kabel je nenápadný (vede pod zemí)
       const n = l.n || 1;
       const dl = Math.hypot(b.x - a.x, b.y - a.y) || 1;
       const px = -(b.y - a.y) / dl, py = (b.x - a.x) / dl;
       for (let k = 0; k < n; k++) {
         const o = (k - (n - 1) / 2) * 0.18;
         renderer.pushLine(a.x + px * o, a.y + py * o, b.x + px * o, b.y + py * o,
-          r, g, bl, 0.95, Math.min(1, l.load), dir);
+          r, g, bl, alpha, Math.min(1, l.load), dir);
       }
     }
     // rozestavěné vedení – barvou zvolené úrovně, červeně když je moc dlouhé
