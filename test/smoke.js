@@ -820,6 +820,38 @@ const server = http.createServer((req, res) => {
   if (!(replayT2.progressed > replayT1.timeAtStart)) throw new Error('replay se nepřehrává');
   if (!replayT2.restored) throw new Error('replay nevrátil živou hru');
 
+  // --- klikací log: zpráva s 📍 skočí kamerou a otevře panel viníka ---
+  const logJump = await page.evaluate(() => {
+    const { sim, renderer } = EG.game;
+    // vyrobit cílenou zprávu na existující budovu
+    const target = sim.buildings.find((b) => b.kind !== 'xborder');
+    sim.msg('Testovací problém budovy', 'warn', target);
+    // překreslit log (updateHUD běží v loopu – vynutíme změnou počtu zpráv)
+    return { tx: target.x, ty: target.y, id: target.id };
+  });
+  await page.waitForTimeout(700); // ať loop log překreslí
+  const logJump2 = await page.evaluate((t) => {
+    const rows = [...document.querySelectorAll('#log div')];
+    const row = rows.reverse().find((d) => d.dataset.x !== undefined);
+    if (!row) return { fail: 'v logu není klikací zpráva' };
+    const hasPin = row.textContent.includes('📍');
+    row.click();
+    const { sim, renderer } = EG.game;
+    const [wx, wy] = renderer.tileToWorld(+row.dataset.x, +row.dataset.y);
+    return {
+      hasPin,
+      camOk: Math.abs(renderer.cam.x - wx) < 1 && Math.abs(renderer.cam.y - wy) < 1,
+      panelOpen: !document.querySelector('#bpanel').hidden,
+      panelTitle: document.querySelector('#bp-title').textContent,
+    };
+  }, logJump);
+  console.log('klikací log:', JSON.stringify(logJump2));
+  if (logJump2.fail) throw new Error(logJump2.fail);
+  if (!logJump2.hasPin) throw new Error('cílená zpráva nemá 📍');
+  if (!logJump2.camOk) throw new Error('klik na zprávu neskočil kamerou');
+  if (!logJump2.panelOpen) throw new Error('klik na zprávu neotevřel panel viníka');
+  await page.evaluate(() => document.querySelector('#bp-close').click());
+
   // --- G: N-1 ve Web Workeru ---
   await page.evaluate(() => { document.querySelector('#btn-n1').click(); });
   let n1Done = false;

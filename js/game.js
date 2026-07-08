@@ -115,8 +115,13 @@
         if (e.data.cmd !== 'n1') return;
         sim._n1Critical = new Set(e.data.critical);
         sim._n1Until = sim.time + 12;
-        if (e.data.critical.length === 0) sim.msg('N-1: síť přežije výpadek libovolného vedení ✓');
-        else sim.msg('N-1: ' + e.data.critical.length + ' kritických vedení (blikají) – dostav zálohy!', 'warn');
+        if (e.data.critical.length === 0) {
+          sim.msg('N-1: síť přežije výpadek libovolného vedení ✓');
+        } else {
+          const first = sim.lines.find((l) => l.id === e.data.critical[0]);
+          sim.msg('N-1: ' + e.data.critical.length + ' kritických vedení (blikají) – dostav zálohy!', 'warn',
+            first && sim._lineMid(first));
+        }
       };
       n1Worker.onerror = () => { n1Worker = null; };
     } catch (e) { n1Worker = null; }
@@ -161,12 +166,26 @@
     if (mode === 'sandbox') { sim.money = 1e9; sim.msg('Režim SANDBOX: neomezené peníze.'); }
     if (mode === 'expert') { sim.money = 500; sim.hardMode = true; sim.msg('Režim EXPERT: méně peněz, rychlejší opotřebení, dvojité sankce!', 'warn'); }
 
-    // klik na hlášku v logu skočí kamerou na místo ([x,y] v textu)
+    // klik na hlášku v logu skočí kamerou na místo problému a otevře jeho panel
     $('#log').addEventListener('click', (e) => {
-      const mch = (e.target.textContent || '').match(/\[(\d+),(\d+)\]/);
-      if (!mch) return;
-      const [wx, wy] = renderer.tileToWorld(+mch[1], +mch[2]);
+      const row = e.target.closest('div[data-x]');
+      let tx, ty;
+      if (row) {
+        tx = +row.dataset.x; ty = +row.dataset.y;
+      } else {
+        // starší hlášky bez cíle: zkusit souřadnice [x,y] z textu
+        const mch = (e.target.textContent || '').match(/\[(\d+),(\d+)\]/);
+        if (!mch) return;
+        tx = +mch[1]; ty = +mch[2];
+      }
+      const [wx, wy] = renderer.tileToWorld(tx, ty);
       renderer.cam.x = wx; renderer.cam.y = wy;
+      if (renderer.cam.zoom < 1) renderer.cam.zoom = 1.2;
+      // rovnou otevřít panel viníka: budova na místě, jinak nejbližší vedení
+      const b = sim.buildingAt(tx, ty);
+      if (b) { selectBuilding(b); return; }
+      const l = lineNear(tx, ty);
+      if (l) selectLine(l);
     });
 
     setupInput(canvas);
@@ -1519,8 +1538,12 @@
     if (sim.messages.length !== lastMsgCount) {
       lastMsgCount = sim.messages.length;
       const log = $('#log');
-      log.innerHTML = sim.messages.slice(-6).map((m) =>
-        '<div class="' + m.kind + '">' + m.text + '</div>').join('');
+      log.innerHTML = sim.messages.slice(-6).map((m) => {
+        const loc = m.x !== undefined;
+        return '<div class="' + m.kind + (loc ? ' loc' : '') + '"' +
+          (loc ? ' data-x="' + m.x + '" data-y="' + m.y + '" title="Klikni – skok na místo"' : '') + '>' +
+          (loc ? '📍 ' : '') + m.text + '</div>';
+      }).join('');
       log.scrollTop = log.scrollHeight;
     }
   }
