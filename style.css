@@ -24,6 +24,16 @@ html, body {
   transition: opacity 1s;
 }
 
+/* konec hry */
+#gameover {
+  position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%);
+  background: rgba(20, 8, 8, 0.95); border: 2px solid #7e2f28; border-radius: 12px;
+  padding: 26px 40px; text-align: center; z-index: 20;
+}
+#gameover div { font-size: 30px; font-weight: 800; color: #ff6a5a; margin-bottom: 8px; }
+#gameover p { color: #cdd6de; font-size: 13px; }
+#gameover[hidden] { display: none; }
+
 /* fotorežim (klávesa P): schová celé UI */
 body.photo #hud, body.photo #toolbar, body.photo #linebar, body.photo #help,
 body.photo #btn-help, body.photo #minimap, body.photo #log, body.photo #hover-info,

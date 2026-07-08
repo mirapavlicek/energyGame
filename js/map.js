@@ -183,6 +183,7 @@
       { type: 'pila', label: 'Pila', demand: [8, 16], names: ['Borek', 'Javorina', 'Smrčina'] },
       { type: 'chemicka', label: 'Chemička', demand: [22, 40], names: ['Ústí', 'Zaluží', 'Semtín'] },
     ];
+    const DATA_DEF = { type: 'data', label: 'Datacentrum', demand: [24, 34], names: ['Alfa', 'Beta', 'Gama', 'Delta'] };
     const wantedInd = Math.round(6 * areaScale);
     let indAttempts = 0;
     while (industries.length < wantedInd && indAttempts++ < 60000) {
@@ -206,7 +207,8 @@
         if (tt === T.HILL || tt === T.MOUNTAIN) nearHill = true;
         if (tt === T.RIVER) nearRiver = true;
       }
-      const def = nearHill ? IND_DEFS[0]
+      const def = hash2(x, y, seed + 55) < 0.15 ? DATA_DEF
+        : nearHill ? IND_DEFS[0]
         : nearRiver ? IND_DEFS[3]
         : nearForest ? IND_DEFS[2]
         : IND_DEFS[1];
