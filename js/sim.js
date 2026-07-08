@@ -1709,8 +1709,8 @@
         let util;
         if (b.kind === 'sub') util = demandAt[i] > 0 ? 1 : 0.3;
         else util = wantGen[i] > 0 ? gen[i] / Math.max(1e-6, wantGen[i]) : 0;
-        // modernizovaná budova se opotřebovává pomaleji
-        const wear = WEAR[b.kind] / (1 + 0.35 * (b.level - 1));
+        // modernizovaná budova se opotřebovává pomaleji (expert režim rychleji)
+        const wear = WEAR[b.kind] * (this.hardMode ? 1.5 : 1) / (1 + 0.35 * (b.level - 1));
         b.cond = Math.max(0, b.cond - wear * (0.35 + 0.65 * util) * dt);
         // zanedbaná budova může selhat úplně
         if (b.cond < 0.2 && Math.random() < dt * (0.2 - b.cond) * 0.6) {
@@ -1743,7 +1743,7 @@
         exported += b.xServed;
         const short = b.xExport - b.xServed;
         if (short > 0.5) {
-          xPenalty += short * XTRADE.penalty;
+          xPenalty += short * XTRADE.penalty * (this.hardMode ? 2 : 1);
           if (this._xPenWarnT !== Math.floor(this.time / 7)) {
             this._xPenWarnT = Math.floor(this.time / 7);
             this.msg('SANKCE: ' + b.name + ' – nedodáváš sjednaný export (' +
@@ -1823,6 +1823,59 @@
     this.cityAssign = cityAssign;
     this.indAssign = indAssign;
     this.xAssign = xAssign;
+  };
+
+  /* --- uložení a načtení hry (celý stav včetně změn terénu) --- */
+  const u8ToB64 = (u8) => {
+    let s = '';
+    for (let i = 0; i < u8.length; i += 4096) s += String.fromCharCode.apply(null, u8.subarray(i, i + 4096));
+    return btoa(s);
+  };
+  const b64ToU8 = (b64) => {
+    const s = atob(b64);
+    const u8 = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) u8[i] = s.charCodeAt(i);
+    return u8;
+  };
+
+  EG.serialize = function (sim) {
+    const m = sim.map;
+    return JSON.stringify({
+      v: 1, seed: m.seed, size: m.size,
+      type: u8ToB64(m.type),
+      flow: u8ToB64(new Uint8Array(new Float32Array(m.flow).buffer)),
+      cities: m.cities, industries: m.industries, geoFields: m.geoFields, crossings: m.crossings,
+      sim: {
+        money: sim.money, time: sim.time, score: sim.score, debt: sim.debt || 0,
+        blackouts: sim.blackouts, nextId: sim.nextId,
+        buildings: sim.buildings, lines: sim.lines, events: sim.events || [],
+        noiseT: sim._noiseT,
+      },
+    });
+  };
+
+  EG.restore = function (json) {
+    const d = JSON.parse(json);
+    const map = EG.generateMap(d.size, d.seed);
+    map.type.set(b64ToU8(d.type));
+    map.flow.set(new Float32Array(b64ToU8(d.flow).buffer));
+    map.cities = d.cities;
+    map.industries = d.industries;
+    map.geoFields = d.geoFields;
+    map.crossings = d.crossings;
+    const sim = new Sim(map);
+    sim.buildings = d.sim.buildings;   // včetně přeshraničních bodů
+    sim.lines = d.sim.lines;
+    sim.events = d.sim.events;
+    sim.money = d.sim.money;
+    sim.time = d.sim.time;
+    sim.score = d.sim.score;
+    sim.debt = d.sim.debt;
+    sim.blackouts = d.sim.blackouts;
+    sim.nextId = d.sim.nextId;
+    sim._noiseT = d.sim.noiseT;
+    sim.tick(0.001);
+    return sim;
   };
 
   EG.Sim = Sim;

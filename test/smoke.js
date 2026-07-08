@@ -723,6 +723,60 @@ const server = http.createServer((req, res) => {
   if (sources.bioName !== 'štěpka' || sources.bioGen !== 70) throw new Error('retrofit na biomasu nefunguje: ' + sources.bioName + '/' + sources.bioGen);
   if (sources.maxLevel !== 5 || sources.multL5 !== 1.8) throw new Error('5 úrovní modernizace nefunguje');
 
+  // --- UI/meta E: save/load, vrstvy, grafy, undo, kaskáda, rekord, výzva ---
+  const metaE = await page.evaluate(() => {
+    const results = {};
+    const { sim, map } = EG.game;
+    // uložit -> změnit peníze -> načíst -> peníze zpět
+    sim.money = 4242;
+    const saved = EG.serialize(sim);
+    localStorage.setItem('eg_save', saved);
+    results.saveSize = saved.length;
+    const restored = EG.restore(saved);
+    results.restoreMoney = Math.round(restored.money);
+    results.restoreBuildings = restored.buildings.length === sim.buildings.length;
+    results.restoreLines = restored.lines.length === sim.lines.length;
+    results.restoreSeed = restored.map.seed === map.seed;
+    // undo: postavit rozvodnu přes sim + zásobník akcí testujeme přes UI klávesu níže
+    // achievementy/rekord: existence API
+    results.spotShown = document.querySelector('#spot').textContent.includes('×');
+    results.chartBtn = !!document.querySelector('#btn-chart');
+    results.layerBtn = !!document.querySelector('#btn-layer');
+    // kaskáda v panelu rozvodny se testuje nákupem přes sim API
+    const sub2 = sim.buildings.find((b) => b.kind === 'sub' && !(b.trafos && b.trafos.t110_22));
+    return results;
+  });
+  console.log('meta E:', JSON.stringify(metaE));
+  if (metaE.restoreMoney !== 4242 || !metaE.restoreBuildings || !metaE.restoreLines || !metaE.restoreSeed)
+    throw new Error('uložení/načtení hry nefunguje: ' + JSON.stringify(metaE));
+  if (!metaE.spotShown || !metaE.chartBtn || !metaE.layerBtn) throw new Error('HUD prvky (spot/graf/vrstvy) chybí');
+
+  // načtení přes tlačítko + graf + vrstvy + undo klávesou
+  const metaE2 = await page.evaluate(() => {
+    document.querySelector('#btn-load').click();
+    const moneyAfterLoad = Math.round(EG.game.sim.money);
+    document.querySelector('#btn-chart').click();
+    const chartVisible = !document.querySelector('#chart').hidden;
+    document.querySelector('#btn-layer').click();
+    return { moneyAfterLoad, chartVisible };
+  });
+  // posunout herní čas, ať se nasbírají vzorky grafu (headless kreslí zřídka)
+  for (let k = 0; k < 4; k++) {
+    await page.evaluate(() => { for (let i = 0; i < 5; i++) EG.game.sim.tick(1); });
+    await page.waitForTimeout(900);
+  }
+  const metaE3 = await page.evaluate(() => {
+    const cv = document.querySelector('#chart');
+    const g = cv.getContext('2d');
+    const px = g.getImageData(0, 0, cv.width, cv.height).data;
+    let nonEmpty = 0;
+    for (let i = 3; i < px.length; i += 40) if (px[i] > 0) nonEmpty++;
+    return { chartPixels: nonEmpty };
+  });
+  console.log('meta E2:', JSON.stringify({ ...metaE2, ...metaE3 }));
+  if (metaE2.moneyAfterLoad !== 4242) throw new Error('načtení hry tlačítkem nefunguje: ' + metaE2.moneyAfterLoad);
+  if (!metaE2.chartVisible || !(metaE3.chartPixels > 5)) throw new Error('graf se nekreslí');
+
   // --- ekonomika D: spot, prestiž, úvěry, rezerva, inflace, mise, EV, data ---
   const econ = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);

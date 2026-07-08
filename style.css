@@ -24,6 +24,15 @@ html, body {
   transition: opacity 1s;
 }
 
+/* graf výroby a spotřeby */
+#chart {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 44px;
+  background: rgba(10, 14, 19, 0.9);
+  border: 1px solid #2c3a48; border-radius: 10px;
+  z-index: 6;
+}
+#chart[hidden] { display: none; }
+
 /* konec hry */
 #gameover {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%);
@@ -132,9 +141,10 @@ body.photo #bpanel { display: none !important; }
   position: absolute; left: 10px; bottom: 10px;
   width: 300px; max-height: 120px; overflow: hidden;
   font-size: 12px; line-height: 1.45;
-  pointer-events: none;
+  pointer-events: auto; cursor: pointer;
   text-shadow: 0 1px 3px rgba(0,0,0,0.9);
 }
+#log div:hover { text-decoration: underline; }
 #log .info { color: #b9c7d3; }
 #log .warn { color: #ffb14d; }
 
