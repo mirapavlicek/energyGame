@@ -206,7 +206,9 @@
     this.blackouts = 0;
     this.messages = [];
     this.stats = { produced: 0, delivered: 0, demand: 0 };
-    this._noiseT = Math.random() * 1000;
+    // deterministický RNG (kvůli replayi a plánovacímu režimu)
+    this._rng = EG.rng.mulberry32(((map.seed ^ 0x9e3779b9) >>> 0) || 1);
+    this._noiseT = this._rng() * 1000;
 
     // přeshraniční předávací body jako pevné (nezbouratelné) uzly sítě
     for (const cr of map.crossings || []) {
@@ -1245,7 +1247,7 @@
         for (const e of storms) {
           if (distToSegSim(e.x, e.y, aB.x, aB.y, bB.x, bB.y) <= e.r) {
             l.effCap *= 0.5;
-            if (Math.random() < dt * 0.08) {
+            if (this._rng() < dt * 0.08) {
               l.trippedUntil = e.until;
               this.msg('⛈ Bouřka odpojila vedení ' + LINE_TYPES[l.level].name + ' [' +
                 aB.x + ',' + aB.y + ']–[' + bB.x + ',' + bB.y + ']!', 'warn');
@@ -1681,7 +1683,7 @@
         c.unhappyTime = 0;
         // pomalý růst: jen spokojená města, a čím větší, tím pomaleji
         const growRate = 0.008 * c.satisfaction * (1 - c.pop / 80);
-        if (Math.random() < dt * growRate && c.pop < 60) {
+        if (this._rng() < dt * growRate && c.pop < 60) {
           c.pop += 1;
           this._syncHouses(c);
           this.msg(c.name + ' se rozrostlo na ' + c.pop + ' tis. obyvatel');
@@ -1689,7 +1691,7 @@
       } else {
         c.satisfaction = Math.max(0, c.satisfaction - dt * (0.05 + 0.1 * (1 - ratio)));
         c.unhappyTime += dt;
-        if (c.unhappyTime > 20 && Math.random() < dt * 0.03 && c.pop > 4) {
+        if (c.unhappyTime > 20 && this._rng() < dt * 0.03 && c.pop > 4) {
           c.pop -= 1;
           this._syncHouses(c);
           this.blackouts++;
@@ -1757,7 +1759,7 @@
       }
       if (l.broken) continue;
       l.cond = Math.max(0, l.cond - 0.0005 * (0.4 + 0.6 * Math.min(1, l.load)) * dt * (this.hardMode ? 1.5 : 1));
-      if (l.cond < 0.15 && Math.random() < dt * (0.15 - l.cond) * 0.8) {
+      if (l.cond < 0.15 && this._rng() < dt * (0.15 - l.cond) * 0.8) {
         l.broken = true;
         this.msg('PORUCHA VEDENÍ: zestárlá trasa ' + LINE_TYPES[l.level].name + ' vypadla – potřebuje servis!', 'warn');
       }
@@ -1787,7 +1789,7 @@
         const wear = WEAR[b.kind] * (this.hardMode ? 1.5 : 1) / (1 + 0.35 * (b.level - 1));
         b.cond = Math.max(0, b.cond - wear * (0.35 + 0.65 * util) * dt);
         // zanedbaná budova může selhat úplně
-        if (b.cond < 0.2 && Math.random() < dt * (0.2 - b.cond) * 0.6) {
+        if (b.cond < 0.2 && this._rng() < dt * (0.2 - b.cond) * 0.6) {
           b.broken = true;
           this.msg('PORUCHA: ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] je mimo provoz!', 'warn');
         }

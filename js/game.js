@@ -74,7 +74,6 @@
     $('#btn-newmap').addEventListener('click', () => {
       location.search = '?seed=' + ((Math.random() * 1e9) | 0);
     });
-    $('#btn-n1').addEventListener('click', () => sim.n1Report());
     $('#btn-loan').addEventListener('click', () => sim.takeLoan(2000));
     $('#btn-repay').addEventListener('click', () => sim.repayLoan(500));
 
@@ -99,6 +98,35 @@
       const d = new Date();
       const s = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
       location.search = '?seed=' + s;
+    });
+
+    // plánovací režim a replay
+    $('#btn-plan').addEventListener('click', () => (planning ? cancelPlan() : enterPlan()));
+    $('#plan-confirm').addEventListener('click', confirmPlan);
+    $('#plan-cancel').addEventListener('click', cancelPlan);
+    $('#btn-replay').addEventListener('click', startReplay);
+    $('#replay-stop').addEventListener('click', stopReplay);
+
+    // Web Worker: N-1 analýza na pozadí (render se nezasekne)
+    let n1Worker = null;
+    try {
+      n1Worker = new Worker('js/worker.js');
+      n1Worker.onmessage = (e) => {
+        if (e.data.cmd !== 'n1') return;
+        sim._n1Critical = new Set(e.data.critical);
+        sim._n1Until = sim.time + 12;
+        if (e.data.critical.length === 0) sim.msg('N-1: síť přežije výpadek libovolného vedení ✓');
+        else sim.msg('N-1: ' + e.data.critical.length + ' kritických vedení (blikají) – dostav zálohy!', 'warn');
+      };
+      n1Worker.onerror = () => { n1Worker = null; };
+    } catch (e) { n1Worker = null; }
+    $('#btn-n1').addEventListener('click', () => {
+      if (n1Worker) {
+        sim.msg('N-1 analýza běží na pozadí…');
+        n1Worker.postMessage({ cmd: 'n1', save: EG.serialize(sim) });
+      } else {
+        sim.n1Report();
+      }
     });
 
     // seznam objektů
@@ -159,10 +187,168 @@
     sim.msg('Vítej! Postav elektrárnu, u města rozvodnu a kup do ní trafa (klik na rozvodnu).');
     sim.msg('Pak vše spoj vedením správného napětí – vodní elektrárna vyrábí na 110 kV.');
 
+    // záznam akcí pro replay (po scénářích/režimech, ať sedí startovní peníze)
+    instrument(sim);
+
     // ladicí přístup (používá i smoke test)
-    EG.game = { get sim() { return sim; }, get map() { return map; }, get renderer() { return renderer; } };
+    EG.game = {
+      get sim() { return sim; }, get map() { return map; }, get renderer() { return renderer; },
+      plan: { enter: enterPlan, confirm: confirmPlan, cancel: cancelPlan, get active() { return planning; } },
+      replay: { start: startReplay, stop: stopReplay, get active() { return !!replaying; } },
+    };
 
     requestAnimationFrame(loop);
+  }
+
+  /* ---------- záznam akcí (replay + plánovací režim) ----------
+     Mutující metody simu se obalí a každá úspěšná akce se zapíše
+     s časem; odkazy na budovy/vedení se ukládají přes id. */
+  const MUTATORS = ['place', 'connect', 'demolish', 'removeLine', 'buyTrafo', 'buyTrafoReg',
+    'setTrafoReg', 'buyCompensator', 'upgrade', 'upgradeRange', 'service', 'serviceLine',
+    'setContract', 'setFuelContract', 'buyFuel', 'setMothball', 'retrofitBiomass',
+    'adjustXContract', 'takeLoan', 'repayLoan'];
+
+  function encodeArg(x) {
+    if (x && typeof x === 'object') {
+      if (x.kind !== undefined && x.id !== undefined) return { $b: x.id };
+      if (x.level !== undefined && x.a !== undefined && x.b !== undefined) return { $l: x.id };
+    }
+    return x;
+  }
+
+  function decodeArg(s, x) {
+    if (x && typeof x === 'object') {
+      if (x.$b !== undefined) return s.buildings.find((o) => o.id === x.$b);
+      if (x.$l !== undefined) return s.lines.find((o) => o.id === x.$l);
+    }
+    return x;
+  }
+
+  function instrument(s) {
+    s._log = [];
+    s._startMoney = s.money;
+    for (const fn of MUTATORS) {
+      const orig = s[fn].bind(s);
+      s[fn] = (...args) => {
+        const r = orig(...args);
+        if (r !== null && r !== false && s._log.length < 8000) {
+          s._log.push({ t: +s.time.toFixed(3), fn, args: args.map(encodeArg) });
+        }
+        return r;
+      };
+    }
+  }
+
+  function applyAction(s, a) {
+    if (a.fn === '__cheat') { s.money += 1000; return; }
+    s[a.fn](...a.args.map((x) => decodeArg(s, x)));
+  }
+
+  /* ---------- plánovací režim (blueprint) ----------
+     Stínová kopie simulace: stavíš na zkoušku (čas stojí), vidíš cenu,
+     a teprve potvrzení přehraje akce do skutečné hry. */
+  let planning = false;
+  let planBase = null;
+  let planStartId = 0;
+
+  function enterPlan() {
+    if (planning || replaying) return;
+    planning = true;
+    planBase = { sim, map, speed };
+    speed = 0; updateSpeedLabel();
+    sim = EG.restore(EG.serialize(sim));
+    map = sim.map;
+    instrument(sim);
+    planStartId = sim.nextId;
+    EG.onTerrainChanged();
+    setupMinimap();
+    closePanel();
+    $('#plan-bar').hidden = false;
+    $('#btn-plan').classList.add('active');
+    sim.msg('📐 PLÁNOVACÍ REŽIM: stav na zkoušku, zaplatí se až po potvrzení.');
+  }
+
+  function exitPlan() {
+    planning = false;
+    sim = planBase.sim;
+    map = planBase.map;
+    speed = planBase.speed || 1; updateSpeedLabel();
+    planBase = null;
+    EG.onTerrainChanged();
+    setupMinimap();
+    closePanel();
+    $('#plan-bar').hidden = true;
+    $('#btn-plan').classList.remove('active');
+  }
+
+  function confirmPlan() {
+    if (!planning) return;
+    const log = sim._log || [];
+    exitPlan();
+    let ok = 0, fail = 0;
+    for (const a of log) {
+      const r = sim[a.fn](...a.args.map((x) => decodeArg(sim, x)));
+      if (r === null || r === false) fail++; else ok++;
+    }
+    sim.msg('📐 Plán potvrzen: ' + ok + ' akcí provedeno' + (fail ? ', ' + fail + ' neprošlo' : '') + '.');
+  }
+
+  function cancelPlan() {
+    if (!planning) return;
+    exitPlan();
+    sim.msg('📐 Plán zrušen – nic se nestavělo.');
+  }
+
+  /* ---------- replay: přehrání záznamu hry od začátku (8×) ---------- */
+  let replaying = null;
+
+  function startReplay() {
+    if (planning || replaying) return;
+    if (!sim._log) { sim.msg('Replay funguje jen pro hru rozehranou v této seanci', 'warn'); return; }
+    const base = { sim, map, speed };
+    const fresh = new EG.Sim(EG.generateMap(map.size, map.seed));
+    fresh.money = sim._startMoney;
+    replaying = { base, log: sim._log.slice(), i: 0, endT: sim.time };
+    speed = 0; updateSpeedLabel();
+    sim = fresh;
+    map = fresh.map;
+    EG.onTerrainChanged();
+    setupMinimap();
+    closePanel();
+    $('#replay-bar').hidden = false;
+  }
+
+  function stopReplay() {
+    if (!replaying) return;
+    sim = replaying.base.sim;
+    map = replaying.base.map;
+    speed = replaying.base.speed || 1; updateSpeedLabel();
+    replaying = null;
+    EG.onTerrainChanged();
+    setupMinimap();
+    $('#replay-bar').hidden = true;
+    sim.msg('🎬 Replay ukončen, hra pokračuje.');
+  }
+
+  function stepReplay(frameDt) {
+    const r = replaying;
+    let remaining = frameDt * 8; // 8× rychlost
+    let guard = 0;
+    while (remaining > 1e-6 && guard++ < 300) {
+      const nextA = r.log[r.i];
+      let chunk = Math.min(0.1, remaining, r.endT - sim.time);
+      if (nextA && nextA.t > sim.time && nextA.t < sim.time + chunk) chunk = nextA.t - sim.time;
+      if (chunk > 1e-6) {
+        sim.tick(chunk);
+        remaining -= chunk;
+      }
+      while (r.log[r.i] && r.log[r.i].t <= sim.time + 1e-6) {
+        try { applyAction(sim, r.log[r.i]); } catch (e) { /* akce v replayi nevyšla */ }
+        r.i++;
+      }
+      if (sim.time >= r.endT - 1e-6) { stopReplay(); return; }
+    }
+    $('#replay-time').textContent = Math.floor(sim.time) + ' / ' + Math.floor(r.endT) + ' s';
   }
 
   /* ---------- scénáře s cíli ---------- */
@@ -245,8 +431,11 @@
   function loadSave() {
     const data = localStorage.getItem('eg_save');
     if (!data) { sim.msg('Žádná uložená hra', 'warn'); return false; }
+    if (planning) cancelPlan();
+    if (replaying) stopReplay();
     try {
       sim = EG.restore(data);
+      sim._log = null; // replay funguje jen od začátku seance
       map = sim.map;
       EG.onTerrainChanged();
       setupMinimap();
@@ -424,6 +613,7 @@
         if (cheatBuf.endsWith('funds')) {
           cheatBuf = '';
           sim.money += 1000;
+          if (sim._log) sim._log.push({ t: +sim.time.toFixed(3), fn: '__cheat', args: [] });
           sim.msg('Cheat aktivován: +1 000 €');
         }
       }
@@ -439,6 +629,7 @@
       else if (k === 'q') setTool('pan');
       else if (k === 'x') setTool('demolish');
       else if (k === 'p') document.body.classList.toggle('photo'); // fotorežim
+      else if (k === 'b') { if (planning) cancelPlan(); else enterPlan(); } // plán
       else if (k === ' ') { e.preventDefault(); speed = speed === 0 ? 1 : 0; updateSpeedLabel(); }
       else if (k === '+' || k === '=') { speed = Math.min(4, (speed || 1) * 2); updateSpeedLabel(); }
       else if (k === '-') { speed = Math.max(1, speed / 2) * (speed === 0 ? 0 : 1); updateSpeedLabel(); }
@@ -446,6 +637,7 @@
   }
 
   function click() {
+    if (replaying) return; // při přehrávání záznamu se nezasahuje
     const [gx, gy] = hover;
     if (tool === 'pan') {
       const b = sim.buildingAt(gx, gy);
@@ -488,6 +680,7 @@
 
   /* undo poslední stavby (Ctrl+Z) – plná vratka */
   function undoLast() {
+    if (planning || replaying) { sim.msg('V plánu/replayi undo nefunguje – použij Zrušit', 'warn'); return; }
     const a = undoStack.pop();
     if (!a) { sim.msg('Není co vracet', 'warn'); return; }
     if (a.t === 'b') {
@@ -1295,6 +1488,9 @@
     $('#freq').textContent = (sim.freq || 50).toFixed(1) + ' Hz';
     $('#freq').style.color = (sim.freq || 50) < 49.5 ? '#ff6a5a' : (sim.freq || 50) < 49.9 ? '#f0c040' : '';
 
+    if (planning && planBase) {
+      $('#plan-cost').textContent = Math.round(planBase.sim.money - sim.money).toLocaleString('cs-CZ') + ' €';
+    }
     $('#spot').textContent = (sim.spotK || 1).toFixed(2) + '×';
     $('#spot').style.color = (sim.spotK || 1) > 1.25 ? '#f0c040' : '';
     $('#debt-item').hidden = !(sim.debt > 0);
@@ -1361,7 +1557,8 @@
         r = 0.35 + 0.3 * bl3; g = 0.12; bl = 0.1;
       }
       if (l === selectedLine) { r = Math.min(1, r + 0.4); g = Math.min(1, g + 0.4); bl = Math.min(1, bl + 0.3); }
-      const alpha = l.cable ? 0.55 : 0.95; // kabel je nenápadný (vede pod zemí)
+      let alpha = l.cable ? 0.55 : 0.95; // kabel je nenápadný (vede pod zemí)
+      if (planning && l.id >= planStartId) { alpha = 0.5; bl = Math.min(1, bl + 0.5); } // plánované vedení
       const n = l.n || 1;
       const dl = Math.hypot(b.x - a.x, b.y - a.y) || 1;
       const px = -(b.y - a.y) / dl, py = (b.x - a.x) / dl;
@@ -1418,10 +1615,15 @@
       let alpha = 1;
       if (b && b.builtAt !== undefined) {
         const age = sim.time - b.builtAt;
-        if (age < 3) {
+        if (age < 3 && !planning) {
           alpha = 0.35 + 0.65 * (age / 3);
           tintR *= 0.8; tintG *= 0.8; tintB *= 0.8;
         }
+      }
+      // plánované stavby: modravý průhledný duch
+      if (planning && b && b.id >= planStartId) {
+        alpha = 0.55;
+        tintR *= 0.6; tintG *= 0.8; tintB = Math.min(1, tintB + 0.5);
       }
       renderer.pushSprite(x, y, sId, tintR, tintG, tintB, alpha);
 
@@ -1539,7 +1741,8 @@
   function loop(t) {
     const dt = Math.min(0.1, (t - lastT) / 1000 || 0.016);
     lastT = t;
-    if (speed > 0 && !sim.gameOver) sim.tick(dt * speed);
+    if (replaying) stepReplay(dt);
+    else if (speed > 0 && !sim.gameOver) sim.tick(dt * speed);
     // vzorky pro grafy (1× za herní sekundu)
     if (sim.time - lastSample >= 1) {
       lastSample = sim.time;

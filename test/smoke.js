@@ -723,6 +723,114 @@ const server = http.createServer((req, res) => {
   if (sources.bioName !== 'štěpka' || sources.bioGen !== 70) throw new Error('retrofit na biomasu nefunguje: ' + sources.bioName + '/' + sources.bioGen);
   if (sources.maxLevel !== 5 || sources.multL5 !== 1.8) throw new Error('5 úrovní modernizace nefunguje');
 
+  // --- G: determinismus simulace (replay-ready) ---
+  const determin = await page.evaluate(() => {
+    const run = () => {
+      const map = EG.generateMap(160, 42);
+      const sim = new EG.Sim(map);
+      sim.money = 100000;
+      const c = map.cities[0];
+      let sub = null;
+      for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+        if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+      }
+      sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+      let coal = null;
+      for (let r = 1; r <= 8 && !coal; r++)
+        for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+          if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+      sim.connect(coal, sub, 220);
+      for (let i = 0; i < 500; i++) sim.tick(0.1); // vč. růstu měst, opotřebení, poruch
+      return { money: sim.money, cond: coal.cond, pop: map.cities[0].pop, condLine: sim.lines[0].cond };
+    };
+    const a = run(), b = run();
+    return {
+      moneyEq: a.money === b.money,
+      condEq: a.cond === b.cond,
+      popEq: a.pop === b.pop,
+      lineEq: a.condLine === b.condLine,
+    };
+  });
+  console.log('determinismus:', JSON.stringify(determin));
+  if (!determin.moneyEq || !determin.condEq || !determin.popEq || !determin.lineEq)
+    throw new Error('simulace není deterministická: ' + JSON.stringify(determin));
+
+  // --- G: plánovací režim (blueprint) ---
+  const planT = await page.evaluate(() => {
+    const g = EG.game;
+    const realSim = g.sim;
+    realSim.money = 10000;
+    const moneyBefore = realSim.money;
+    const nBefore = realSim.buildings.length;
+    g.plan.enter();
+    const inPlan = g.plan.active && g.sim !== realSim;
+    // v plánu postavíme rozvodnu a koupíme trafo
+    const psim = g.sim;
+    let spot = null;
+    outer:
+    for (let y = 0; y < g.map.size; y++) for (let x = 0; x < g.map.size; x++) {
+      if (psim.canPlace('sub', x, y).ok) { spot = [x, y]; break outer; }
+    }
+    const pb = psim.place('sub', spot[0], spot[1]);
+    psim.buyTrafo(pb, 't22_04');
+    const planCost = moneyBefore - psim.money;
+    const realUntouched = realSim.money === moneyBefore && realSim.buildings.length === nBefore;
+    // zrušení: nic se nepostaví
+    g.plan.cancel();
+    const afterCancel = g.sim === realSim && realSim.buildings.length === nBefore && realSim.money === moneyBefore;
+    // znovu a potvrdit
+    g.plan.enter();
+    const psim2 = g.sim;
+    const pb2 = psim2.place('sub', spot[0], spot[1]);
+    psim2.buyTrafo(pb2, 't22_04');
+    g.plan.confirm();
+    const built = g.sim === realSim && realSim.buildings.length === nBefore + 1;
+    const newSub = realSim.buildings[realSim.buildings.length - 1];
+    const trafoBought = (newSub.trafos || {}).t22_04 === 1;
+    const paidOnce = Math.round(moneyBefore - realSim.money) === Math.round(planCost);
+    return { inPlan, planCost, realUntouched, afterCancel, built, trafoBought, paidOnce };
+  });
+  console.log('plán:', JSON.stringify(planT));
+  if (!planT.inPlan || !planT.realUntouched) throw new Error('plán nepracuje na stínové kopii');
+  if (!planT.afterCancel) throw new Error('zrušení plánu nevrátilo hru beze změn');
+  if (!planT.built || !planT.trafoBought || !planT.paidOnce) throw new Error('potvrzení plánu nepřehrálo akce: ' + JSON.stringify(planT));
+
+  // --- G: replay (přehrání záznamu) ---
+  const replayT1 = await page.evaluate(() => {
+    const g = EG.game;
+    const realSim = g.sim;
+    g.replay.start();
+    return {
+      active: g.replay.active,
+      freshSim: g.sim !== realSim,
+      timeAtStart: g.sim.time,
+      barShown: !document.querySelector('#replay-bar').hidden,
+    };
+  });
+  await page.waitForTimeout(1200);
+  const replayT2 = await page.evaluate(() => {
+    const g = EG.game;
+    const progressed = g.sim.time;
+    const wasActive = g.replay.active;
+    if (wasActive) g.replay.stop();
+    return { progressed, wasActive, restored: !g.replay.active && g.sim.time > 0 };
+  });
+  console.log('replay:', JSON.stringify({ ...replayT1, ...replayT2 }));
+  if (!replayT1.active || !replayT1.freshSim || replayT1.timeAtStart > 1) throw new Error('replay nezačal od začátku');
+  if (!(replayT2.progressed > replayT1.timeAtStart)) throw new Error('replay se nepřehrává');
+  if (!replayT2.restored) throw new Error('replay nevrátil živou hru');
+
+  // --- G: N-1 ve Web Workeru ---
+  await page.evaluate(() => { document.querySelector('#btn-n1').click(); });
+  let n1Done = false;
+  for (let k = 0; k < 20 && !n1Done; k++) {
+    await page.waitForTimeout(500);
+    n1Done = await page.evaluate(() => EG.game.sim._n1Critical !== undefined &&
+      EG.game.sim.messages.some((m) => m.text.startsWith('N-1:')));
+  }
+  console.log('N-1 worker:', JSON.stringify({ n1Done }));
+  if (!n1Done) throw new Error('N-1 analýza ve workeru nedoběhla');
+
   // --- F: stárnutí vedení, studené starty, seznam objektů ---
   const batchF = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);
