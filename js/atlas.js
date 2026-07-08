@@ -14,7 +14,7 @@
     HOUSE: 8, HOUSE2: 9, CENTER: 10, HYDRO: 11, DAM: 12, COAL: 13, SOLAR: 14, WIND: 15,
     SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22, XBORDER: 23,
     STAR: 24, PIP: 25, NUKE: 26, GASP: 27, GEOTH: 28, BIOG: 29, WASTE: 30, OWIND: 31,
-    H2: 32, GEOFIELD: 33, WIND2: 34, OWIND2: 35,
+    H2: 32, GEOFIELD: 33, WIND2: 34, OWIND2: 35, TRACT: 36,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -458,6 +458,24 @@
       g.strokeStyle = '#e8ecef'; g.lineWidth = 3;
       g.beginPath(); g.moveTo(AX, AY - 2); g.lineTo(AX, AY - 44); g.stroke();
     }, 2.15, AY - 44));
+
+    at(S.TRACT, (c) => {
+      // trakční napájecí stanice: budka + trakční brána s troleji
+      tile(c, '#a8a49a', '#bcb8ae', '#8a867c');
+      box(c, 8, 4, 7, '#7d5f4a', '#c8b49a', '#a3907a');
+      c.strokeStyle = '#5a626c'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(AX - 12, AY + 2); c.lineTo(AX - 12, AY - 26); c.stroke();
+      c.beginPath(); c.moveTo(AX + 12, AY + 2); c.lineTo(AX + 12, AY - 26); c.stroke();
+      c.beginPath(); c.moveTo(AX - 14, AY - 26); c.lineTo(AX + 14, AY - 26); c.stroke();
+      c.strokeStyle = '#3f464e'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(AX - 10, AY - 24); c.lineTo(AX + 10, AY - 24); c.stroke();
+      // blesk (elektrická trakce)
+      c.fillStyle = '#ffe14d';
+      c.beginPath();
+      c.moveTo(AX + 1, AY - 38); c.lineTo(AX - 3, AY - 31); c.lineTo(AX, AY - 31);
+      c.lineTo(AX - 2, AY - 25); c.lineTo(AX + 3, AY - 33); c.lineTo(AX, AY - 33);
+      c.closePath(); c.fill();
+    });
 
     at(S.SEL, (c) => {
       diamond(c, AX, AY, HW - 1, HH - 0.5);

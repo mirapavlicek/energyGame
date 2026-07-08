@@ -56,13 +56,18 @@ const server = http.createServer((req, res) => {
     cities: EG.game.map.cities.length,
     industries: EG.game.map.industries.length,
     crossings: EG.game.map.crossings.length,
+    geo: EG.game.map.geoFields.length,
+    railways: EG.game.map.railways.length,
+    tract: EG.game.map.industries.filter((o) => o.type === 'trakce').length,
   }));
   console.log('mapa:', JSON.stringify(bigmap));
-  if (bigmap.size !== 227) throw new Error('mapa nemá 227 dlaždic na stranu: ' + bigmap.size);
-  if (!(bigmap.tiles >= 2 * 160 * 160)) throw new Error('počet dlaždic není dvojnásobný: ' + bigmap.tiles);
-  if (bigmap.cities < 18) throw new Error('málo měst na velké mapě: ' + bigmap.cities);
-  if (bigmap.industries < 9) throw new Error('málo průmyslu na velké mapě: ' + bigmap.industries);
-  if (bigmap.crossings < 4) throw new Error('málo předávacích bodů na velké mapě: ' + bigmap.crossings);
+  if (bigmap.size !== 322) throw new Error('mapa nemá 322 dlaždic na stranu: ' + bigmap.size);
+  if (!(bigmap.tiles >= 2 * 227 * 227)) throw new Error('počet dlaždic není znovu dvojnásobný: ' + bigmap.tiles);
+  if (bigmap.cities < 40) throw new Error('málo měst na velké mapě: ' + bigmap.cities);
+  if (bigmap.industries < 30) throw new Error('málo průmyslu na velké mapě: ' + bigmap.industries);
+  if (bigmap.crossings < 5) throw new Error('málo předávacích bodů na velké mapě: ' + bigmap.crossings);
+  if (bigmap.geo < 6) throw new Error('málo geotermálních polí: ' + bigmap.geo);
+  if (bigmap.railways < 3 || bigmap.tract < 6) throw new Error('málo železnic/trakčních stanic: ' + bigmap.railways + '/' + bigmap.tract);
 
   // ověřit, že se něco vykreslilo – jednobarevná scéna by se zkomprimovala do pár kB
   await page.screenshot({ path: '/tmp/eg_start.png' });
@@ -723,6 +728,53 @@ const server = http.createServer((req, res) => {
   if (sources.bioName !== 'štěpka' || sources.bioGen !== 70) throw new Error('retrofit na biomasu nefunguje: ' + sources.bioName + '/' + sources.bioGen);
   if (sources.maxLevel !== 5 || sources.multL5 !== 1.8) throw new Error('5 úrovní modernizace nefunguje');
 
+  // --- železnice: trakční stanice se napájí ze 110 kV a odběr pulzuje ---
+  const rail = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const st = map.industries.find((o) => o.type === 'trakce');
+    if (!st) return { fail: 'na mapě není trakční stanice' };
+    // na trati nejde stavět
+    const railIdx = map.railTiles[Math.floor(map.railTiles.length / 2)];
+    const rx = railIdx % map.size, ry = Math.floor(railIdx / map.size);
+    const onRail = sim.canPlace('coal', rx, ry);
+    // rozvodna u stanice jen s VN trafem nestačí (trakce chce 110 kV)
+    let sub = null;
+    for (let r = 1; r <= 5 && !sub; r++)
+      for (let dy = -r; dy <= r && !sub; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.hypot(dx, dy) > 5.5) continue; // musí být v dosahu rozvodny (6)
+        if (sim.canPlace('sub', st.x + dx, st.y + dy).ok) { sub = sim.place('sub', st.x + dx, st.y + dy); break; }
+      }
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); // 110 i VN přípojnice
+    sim.connect(coal, sub, 220);
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+    const ia = sim.indAssign.find((a) => a.ind === st);
+    const poweredVia110 = ia && ia.level === 110 && st.powered > 0.9;
+    // odběr pulzuje (projíždějící vlaky)
+    let mn = 1e9, mx = 0;
+    for (let i = 0; i < 120; i++) {
+      sim.tick(0.25);
+      const d = sim.indAssign.find((a) => a.ind === st).demand;
+      mn = Math.min(mn, d); mx = Math.max(mx, d);
+    }
+    return {
+      onRailRejected: !onRail.ok, why: onRail.why,
+      poweredVia110,
+      pulseMin: +mn.toFixed(1), pulseMax: +mx.toFixed(1),
+      pulses: mx > mn * 1.8,
+    };
+  });
+  console.log('železnice:', JSON.stringify(rail));
+  if (rail.fail) throw new Error(rail.fail);
+  if (!rail.onRailRejected) throw new Error('na trati jde stavět');
+  if (!rail.poweredVia110) throw new Error('trakce se nenapájí ze 110 kV');
+  if (!rail.pulses) throw new Error('odběr trakce nepulzuje: ' + rail.pulseMin + '–' + rail.pulseMax);
+
   // --- G: determinismus simulace (replay-ready) ---
   const determin = await page.evaluate(() => {
     const run = () => {
@@ -829,7 +881,12 @@ const server = http.createServer((req, res) => {
     // překreslit log (updateHUD běží v loopu – vynutíme změnou počtu zpráv)
     return { tx: target.x, ty: target.y, id: target.id };
   });
-  await page.waitForTimeout(700); // ať loop log překreslí
+  // počkat, až loop log překreslí (headless kreslí zřídka)
+  let hasRow = false;
+  for (let k = 0; k < 12 && !hasRow; k++) {
+    await page.waitForTimeout(700);
+    hasRow = await page.evaluate(() => [...document.querySelectorAll('#log div')].some((d) => d.dataset.x !== undefined));
+  }
   const logJump2 = await page.evaluate((t) => {
     const rows = [...document.querySelectorAll('#log div')];
     const row = rows.reverse().find((d) => d.dataset.x !== undefined);

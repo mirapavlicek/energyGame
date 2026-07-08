@@ -5,7 +5,7 @@
   const A = EG.atlas;
   const S = A.S;
 
-  const MAP_SIZE = 227; // 227² = 51 529 dlaždic (≥ 2× původních 160² = 25 600)
+  const MAP_SIZE = 322; // 322² = 103 684 dlaždic (≥ 2× předchozích 227² = 51 529)
 
   let map, sim, renderer;
   let tool = 'pan';            // pan | hydro | dam | coal | solar | wind | sub | line | demolish
@@ -1413,8 +1413,14 @@
     const ind = (map.industries || []).find((o) => Math.abs(o.x - gx) <= 1 && Math.abs(o.y - gy) <= 1);
     if (ind) {
       const ia = (sim.indAssign || []).find((a) => a.ind === ind);
-      s += ' · ' + ind.name + ' (průmysl, potřeba ' + (ia ? ia.demand.toFixed(0) : ind.demand.toFixed(0)) +
-        ' MW z VN, napájení ' + Math.round((ind.powered || 0) * 100) + ' %, platí +40 %)';
+      const src = ind.type === 'trakce' ? 'ze 110 kV' : 'z VN';
+      s += ' · ' + ind.name + ' (' + (ind.type === 'trakce' ? 'železnice' : 'průmysl') +
+        ', potřeba ' + (ia ? ia.demand.toFixed(0) : ind.demand.toFixed(0)) +
+        ' MW ' + src + ', napájení ' + Math.round((ind.powered || 0) * 100) + ' %)';
+    }
+    if (!ind) {
+      const rw = (map.railways || []).find((r) => r.path.some(([px2, py2]) => px2 === gx && py2 === gy));
+      if (rw) s += ' · ' + rw.name + ' (' + rw.from + ' – ' + rw.to + ')';
     }
     const city = map.cities.find((c) => Math.abs(c.x - gx) <= 2 && Math.abs(c.y - gy) <= 2);
     if (city) {
@@ -1473,6 +1479,16 @@
       const b = sim.buildings.find((o) => o.id === l.b);
       if (!a || !b) continue;
       g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    }
+    // železniční koridory
+    g.strokeStyle = '#4a4038'; g.lineWidth = 1.2;
+    for (const rw of map.railways || []) {
+      g.beginPath();
+      for (let i = 0; i < rw.path.length; i += 6) {
+        const [x, y] = rw.path[i];
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      }
+      g.stroke();
     }
     for (const ind of map.industries || []) {
       g.fillStyle = (ind.powered || 0) > 0.9 ? '#c77dff' : '#ff5340';
@@ -1554,6 +1570,20 @@
     const id2b = new Map();
     for (const b of sim.buildings) id2b.set(b.id, b);
 
+    // železniční koridory (pod elektrickým vedením): dvě souběžné kolejnice
+    for (const rw of map.railways || []) {
+      const p = rw.path;
+      for (let i = 3; i < p.length; i += 3) {
+        const [x1, y1] = p[i - 3], [x2, y2] = p[i];
+        const dl = Math.hypot(x2 - x1, y2 - y1) || 1;
+        const px = -(y2 - y1) / dl, py = (x2 - x1) / dl;
+        for (const o of [-0.09, 0.09]) {
+          renderer.pushLine(x1 + px * o, y1 + py * o, x2 + px * o, y2 + py * o,
+            0.16, 0.13, 0.11, 0.8, 0, 0);
+        }
+      }
+    }
+
     // vedení – barva podle napěťové úrovně, přetížení červeně/oranžově;
     // paralelní systémy se kreslí vedle sebe (společné stožáry)
     for (const l of sim.lines) {
@@ -1611,7 +1641,9 @@
     for (const g of map.geoFields || []) {
       if (!sim.buildingAt(g.x, g.y)) renderer.pushSprite(g.x, g.y, S.GEOFIELD, 1, 1, 1, 0.9);
     }
-    for (const ind of map.industries || []) spr.push([ind.x, ind.y, S.FACTORY, null, null, ind]);
+    for (const ind of map.industries || []) {
+      spr.push([ind.x, ind.y, ind.type === 'trakce' ? S.TRACT : S.FACTORY, null, null, ind]);
+    }
     // animace rotorů: rychlost otáčení podle větru, stojící turbíny (bouřka) neanimují
     const rotorFrame = Math.floor(performance.now() * 0.001 * (1.5 + sim.wind * 5)) % 2;
     for (const b of sim.buildings) {
