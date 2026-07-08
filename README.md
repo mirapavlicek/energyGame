@@ -174,6 +174,12 @@ udržuje). **Tepelné zdroje po odstávce chladnou** a najíždí pozvolna (plyn
 nastartování. Scénáře s cíli: `?scenario=1` (Elektrifikace), `2` (Zbohatni),
 `3` (Zelená síť). Hra jde ovládat i dotykem (tažení, pinch zoom, ťuknutí).
 
+**Plánovací režim** (📐 nebo `B`): hra se zastaví a stavíš na zkoušku ve
+stínové kopii – vidíš průběžnou cenu plánu a zaplatíš až po potvrzení
+(zrušení nic nestojí). **Replay** (🎬): simulace je deterministická a
+zaznamenává akce, takže jde celá seance přehrát od začátku 8× rychle.
+N-1 analýza počítá ve **Web Workeru**, ať se render nezasekne.
+
 HUD navíc nabízí: 📋 seznam objektů s filtrem, 🗺 mapové vrstvy (dosahy rozvoden / zatížení vedení),
 📈 grafy výroby, dodávky, ztrát a spotové ceny, 💾/📂 uložení a načtení hry,
 💳 úvěr a splátky, N-1 analýzu, 🗓 výzvu dne (společný seed z data) a rekord

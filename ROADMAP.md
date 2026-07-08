@@ -1,7 +1,7 @@
 # ⚡ EnergyGame – roadmapa rozšíření
 
-Zásobník nápadů na další vývoj hry, seskupený do oblastí. Položky označené ✅ už jsou ve hře;
-zbývající (🔜) čekají na další iterace.
+Zásobník nápadů na další vývoj hry, seskupený do oblastí.
+Všech 71 položek je implementováno (✅), byť některé ve zjednodušené podobě.
 
 ## Zdroje a technologie
 
@@ -113,7 +113,7 @@ zbývající (🔜) čekají na další iterace.
     graf podle typu zdroje.
 52. ✅ Mapové vrstvy (🗺: dosahy, zatížení) – – přepínatelné overlaye: zatížení vedení, napěťové
     hladiny, spokojenost měst, průtoky řek, větrnost, dosahy rozvoden.
-53. 🔜 Plánovací režim – rozmístění staveb „na zkoušku" s cenovou kalkulací
+53. ✅ Plánovací režim (📐/B) – stínová simulace: stavíš na zkoušku s živou cenou, platí se až potvrzením. Původně: rozmístění staveb „na zkoušku" s cenovou kalkulací
     před potvrzením (blueprint).
 54. ✅ Undo posledního kroku (Ctrl+Z) – – vrácení poslední stavby/demolice.
 55. ✅ Seznam objektů (📋) s filtrem a skokem kamery. Původně: tabulka všech elektráren/rozvoden
@@ -147,5 +147,5 @@ zbývající (🔜) čekají na další iterace.
 
 ## Technika
 
-70. 🔜 Web Worker pro simulaci – oddělení výpočtu od renderu (větší mapy).
-71. 🔜 Ukládání replaye – záznam a přehrání průběhu hry.
+70. ✅ Web Worker – těžké analýzy (N-1) běží mimo hlavní vlákno; herní tick zůstává na main threadu kvůli interaktivitě. Původně: oddělení výpočtu od renderu (větší mapy).
+71. ✅ Replay (🎬) – deterministická simulace + záznam akcí; přehrání seance od začátku 8× rychle. Původně: záznam a přehrání průběhu hry.

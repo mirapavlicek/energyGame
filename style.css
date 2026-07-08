@@ -33,6 +33,18 @@ html, body {
 }
 #chart[hidden] { display: none; }
 
+/* plánovací režim a replay */
+#plan-bar, #replay-bar {
+  position: absolute; left: 50%; top: 46px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(16, 26, 40, 0.95);
+  border: 2px solid #4a80ab; border-radius: 10px;
+  padding: 7px 14px; font-size: 13px; z-index: 9;
+}
+#replay-bar { border-color: #7e5fab; }
+#plan-bar[hidden], #replay-bar[hidden] { display: none; }
+#plan-cost { color: #e8c84a; }
+
 /* seznam objektů */
 #objlist {
   position: absolute; left: 50%; top: 54px; transform: translateX(-50%);
