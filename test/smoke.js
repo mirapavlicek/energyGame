@@ -723,6 +723,111 @@ const server = http.createServer((req, res) => {
   if (sources.bioName !== 'štěpka' || sources.bioGen !== 70) throw new Error('retrofit na biomasu nefunguje: ' + sources.bioName + '/' + sources.bioGen);
   if (sources.maxLevel !== 5 || sources.multL5 !== 1.8) throw new Error('5 úrovní modernizace nefunguje');
 
+  // --- události a počasí: bouřka, vedra, zatmění, povodeň, kůrovec, dotace ---
+  const eventsT = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const c = map.cities[0];
+    let sub = null;
+    for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+    let coal = null, windB = null;
+    for (let r = 1; r <= 10 && !(coal && windB); r++)
+      for (let dy = -r; dy <= r && !(coal && windB); dy++) for (let dx = -r; dx <= r; dx++) {
+        if (!coal && sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); continue; }
+        if (!windB && sim.canPlace('wind', sub.x + dx, sub.y + dy).ok) { windB = sim.place('wind', sub.x + dx, sub.y + dy); }
+      }
+    sim.connect(coal, sub, 220);
+    sim.connect(windB, sub, 22);
+    for (let i = 0; i < 10; i++) sim.tick(0.1);
+    const windBefore = windB.gen;
+    const coalBefore = coal.gen;
+
+    // bouřka nad větrníkem: odstaví ho a sráží kapacitu vedení
+    sim.triggerEvent('storm', { x: windB.x, y: windB.y, r: 10, dur: 30 });
+    for (let i = 0; i < 5; i++) sim.tick(0.1);
+    const windInStorm = windB.gen;
+    const lineCapInStorm = sim.lines.find((l) => l.level === 22).effCap;
+
+    // vlna veder: uhelná −30 %, spotřeba +15 %
+    const demandBefore = sim._cityDemand(c, 0.3);
+    sim.triggerEvent('heat', { dur: 30 });
+    sim.tick(0.1);
+    const coalInHeat = coal.gen;
+    const demandInHeat = sim._cityDemand(c, 0.3);
+
+    // zatmění: solár na nule i v poledne
+    const map2 = EG.generateMap(160, 42);
+    const sim2 = new EG.Sim(map2);
+    sim2.money = 100000;
+    sim2.time = 4 * sim2.dayLen + (7 / 24) * sim2.dayLen; // letní poledne
+    sim2.tick(0.01);
+    const sunBefore = sim2.sun;
+    sim2.triggerEvent('eclipse', { dur: 5 });
+    sim2.tick(0.01);
+    const sunEclipse = sim2.sun;
+
+    // povodeň: stavba u řeky se poškodí, s přehradou ne
+    let riverside = null;
+    outerR:
+    for (let y = 1; y < map2.size - 1; y++) for (let x = 1; x < map2.size - 1; x++) {
+      if (map2.type[map2.idx(x, y)] !== EG.T.RIVER) continue;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (sim2.canPlace('sub', x + dx, y + dy).ok) { riverside = sim2.place('sub', x + dx, y + dy); break outerR; }
+      }
+    }
+    sim2.triggerEvent('flood');
+    const floodBroke = riverside.broken;
+    // s přehradou povodeň neškodí
+    riverside.broken = false; riverside.cond = 1;
+    let damSpot = null;
+    outerD:
+    for (let y = 0; y < map2.size; y++) for (let x = 0; x < map2.size; x++) {
+      if (map2.type[map2.idx(x, y)] === EG.T.RIVER && sim2.canPlace('dam', x, y).ok) { damSpot = sim2.place('dam', x, y); break outerD; }
+    }
+    sim2.triggerEvent('flood');
+    const damProtects = !riverside.broken;
+
+    // kůrovec mění les na louku
+    const forestBefore = Array.from(map2.type).filter((t) => t === EG.T.FOREST).length;
+    sim2.triggerEvent('beetle', { x: 80, y: 80, r: 12 });
+    const forestAfter = Array.from(map2.type).filter((t) => t === EG.T.FOREST).length;
+
+    // dotace: solár o 30 % levněji
+    sim2.triggerEvent('subsidy');
+    let gSpot = null;
+    outerG:
+    for (let y = 0; y < map2.size; y++) for (let x = 0; x < map2.size; x++) {
+      if (sim2.canPlace('solar', x, y).ok) { gSpot = [x, y]; break outerG; }
+    }
+    const mS = sim2.money;
+    sim2.place('solar', gSpot[0], gSpot[1]);
+    const solarPaid = mS - sim2.money;
+
+    return {
+      windBefore: +windBefore.toFixed(1), windInStorm: +windInStorm.toFixed(1),
+      lineCapInStorm,
+      coalBefore: +coalBefore.toFixed(0), coalInHeat: +coalInHeat.toFixed(0),
+      heatDemandUp: demandInHeat > demandBefore * 1.1,
+      sunBefore: +sunBefore.toFixed(2), sunEclipse,
+      floodBroke, damProtects,
+      beetleAte: forestBefore - forestAfter,
+      solarPaid, solarExpected: Math.ceil(EG.BUILD.solar.cost * 0.7),
+    };
+  });
+  console.log('události:', JSON.stringify(eventsT));
+  if (!(eventsT.windBefore > 1) || eventsT.windInStorm !== 0) throw new Error('bouřka neodstavila větrník: ' + eventsT.windInStorm);
+  if (eventsT.lineCapInStorm !== 15) throw new Error('bouřka nesráží kapacitu vedení: ' + eventsT.lineCapInStorm);
+  if (!(eventsT.coalInHeat < eventsT.coalBefore * 0.75)) throw new Error('vedra nesnižují výkon uhelné');
+  if (!eventsT.heatDemandUp) throw new Error('vedra nezvyšují spotřebu');
+  if (!(eventsT.sunBefore > 0.5) || eventsT.sunEclipse !== 0) throw new Error('zatmění nefunguje');
+  if (!eventsT.floodBroke || !eventsT.damProtects) throw new Error('povodeň/ochrana přehradou nefunguje');
+  if (!(eventsT.beetleAte > 0)) throw new Error('kůrovec nežere les: ' + eventsT.beetleAte);
+  if (eventsT.solarPaid !== eventsT.solarExpected) throw new Error('dotace na OZE nefunguje: ' + eventsT.solarPaid);
+
   // --- síť: HVDC, kompenzace, kabely, pole rozvodny, N-1, frekvence ---
   const gridB = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);

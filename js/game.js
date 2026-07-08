@@ -152,6 +152,7 @@
       else if (k === 'escape') { if (selected) closePanel(); else setTool('pan'); }
       else if (k === 'q') setTool('pan');
       else if (k === 'x') setTool('demolish');
+      else if (k === 'p') document.body.classList.toggle('photo'); // fotorežim
       else if (k === ' ') { e.preventDefault(); speed = speed === 0 ? 1 : 0; updateSpeedLabel(); }
       else if (k === '+' || k === '=') { speed = Math.min(4, (speed || 1) * 2); updateSpeedLabel(); }
       else if (k === '-') { speed = Math.max(1, speed / 2) * (speed === 0 ? 0 : 1); updateSpeedLabel(); }
@@ -916,6 +917,11 @@
     $('#losses').style.color = (st.losses || 0) > 0.15 * Math.max(1, st.delivered) ? '#ff6a5a' : '';
     $('#freq').textContent = (sim.freq || 50).toFixed(1) + ' Hz';
     $('#freq').style.color = (sim.freq || 50) < 49.5 ? '#ff6a5a' : (sim.freq || 50) < 49.9 ? '#f0c040' : '';
+
+    // tónování scény: noc ztmavuje, bouřka přidává těžké mraky
+    const night = Math.max(0, 0.38 * (1 - Math.min(1, (sim.sun || 0) * 3)));
+    const stormy = (sim.activeEvents && sim.activeEvents('storm').length > 0) ? 0.16 : 0;
+    $('#scene-overlay').style.opacity = Math.min(0.5, night + stormy).toFixed(2);
     $('#income').textContent = (st.income >= 0 ? '+' : '') + (st.income * 60).toFixed(1) + '/min';
     $('#score').textContent = Math.floor(sim.score).toLocaleString('cs-CZ');
     const ph = sim.dayPhase || 0;
@@ -986,7 +992,15 @@
       if (!sim.buildingAt(g.x, g.y)) renderer.pushSprite(g.x, g.y, S.GEOFIELD, 1, 1, 1, 0.9);
     }
     for (const ind of map.industries || []) spr.push([ind.x, ind.y, S.FACTORY, null, null, ind]);
-    for (const b of sim.buildings) spr.push([b.x, b.y, kindSprite(b.kind), null, b]);
+    // animace rotorů: rychlost otáčení podle větru, stojící turbíny (bouřka) neanimují
+    const rotorFrame = Math.floor(performance.now() * 0.001 * (1.5 + sim.wind * 5)) % 2;
+    for (const b of sim.buildings) {
+      let sId = kindSprite(b.kind);
+      if ((b.kind === 'wind' || b.kind === 'owind') && rotorFrame === 1 && b.gen > 0.5 && !b.mothball) {
+        sId = b.kind === 'wind' ? S.WIND2 : S.OWIND2;
+      }
+      spr.push([b.x, b.y, sId, null, b]);
+    }
     spr.sort((p, q) => (p[0] + p[1]) - (q[0] + q[1]));
     for (const [x, y, sId, city, b, ind] of spr) {
       let dim = 1;
@@ -1060,6 +1074,20 @@
       if (ok && tool !== 'demolish' && tool !== 'line') {
         renderer.pushSprite(gx, gy, kindSprite(tool), 1, 1, 1, 0.55);
       }
+    }
+
+    // zóny aktivních událostí (bouřka, námraza): prstenec + blikající střed
+    for (const e of (sim.events || [])) {
+      if (e.until === undefined || sim.time < e.start || sim.time >= e.until) continue;
+      if (e.type !== 'storm' && e.type !== 'ice') continue;
+      const tint = e.type === 'storm' ? [0.55, 0.45, 1] : [0.6, 0.85, 1];
+      for (let k = 0; k < 16; k++) {
+        const a = k / 16 * Math.PI * 2;
+        renderer.pushSprite(e.x + Math.cos(a) * e.r, e.y + Math.sin(a) * e.r, S.CITYRING,
+          tint[0], tint[1], tint[2], 0.5);
+      }
+      const bl = (Math.sin(performance.now() * 0.01) + 1) / 2;
+      renderer.pushSprite(e.x, e.y, S.BAD, tint[0], tint[1], tint[2], 0.3 + 0.4 * bl);
     }
 
     // nenapájená města a porouchané budovy – blikající indikátor

@@ -308,7 +308,11 @@
   Sim.prototype.place = function (kind, x, y) {
     const chk = this.canPlace(kind, x, y);
     if (!chk.ok) { this.msg(chk.why, 'warn'); return null; }
-    const cost = BUILD[kind].cost;
+    let cost = BUILD[kind].cost;
+    // dotační program: OZE se staví levněji
+    if ((kind === 'solar' || kind === 'wind' || kind === 'owind') && this.activeEvents('subsidy').length > 0) {
+      cost = Math.ceil(cost * 0.7);
+    }
     if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
     this.money -= cost;
     const b = {
@@ -718,8 +722,8 @@
         const f = m.flow[m.idx(b.x, b.y)] * fx.hydro;
         return Math.min(150, 30 + f * 7 + (b.reservoir || 0) * 3);
       }
-      case 'coal': return hasFuel ? (b.bioRetrofit ? 70 : 90) : 0; // bez paliva stojí
-      case 'nuclear': return hasFuel ? 260 : 0;
+      case 'coal': return (hasFuel ? (b.bioRetrofit ? 70 : 90) : 0) * (this._heatActive ? 0.7 : 1); // vedra = málo chladicí vody
+      case 'nuclear': return (hasFuel ? 260 : 0) * (this._heatActive ? 0.7 : 1);
       case 'gas': return hasFuel ? 60 : 0;
       case 'geo': return 25;
       case 'bio': return 12;
@@ -758,8 +762,9 @@
   /* Poptávka města v MW – každé město má vlastní potřebu: roste s populací,
      spotřeba na obyvatele a denní profil se liší podle charakteru města. */
   Sim.prototype._cityDemand = function (c, dayPhase) {
-    // sezónní zátěž: v zimě topení a osvětlení, v létě útlum
-    const base = c.pop * (c.needPerCap || 1.15) * ((this.seasonFx || {}).demand || 1);
+    // sezónní zátěž: v zimě topení a osvětlení, v létě útlum; vedra = klimatizace
+    const base = c.pop * (c.needPerCap || 1.15) * ((this.seasonFx || {}).demand || 1) *
+      (this._heatActive ? 1.15 : 1);
     const h = (6 + dayPhase * 24) % 24;
     let curve;
     if (c.kind === 'ind') {
@@ -887,6 +892,105 @@
     return { checked: this.lines.length, critical: critical.length };
   };
 
+  /* --- události a počasí ---------------------------------------------
+     Bouřka (vichřice), vlna veder, námraza, povodeň, zatmění, kůrovec,
+     dotace OZE. Spouští se deterministicky ze seedu (hash dne), nebo
+     ručně přes triggerEvent – to využívají i testy. */
+  Sim.prototype.triggerEvent = function (type, opts) {
+    opts = opts || {};
+    const m = this.map;
+    const h = (k) => EG.rng.hash2((this.day || 1) * 17 + k, 9, m.seed + 1);
+    const rx = opts.x !== undefined ? opts.x : Math.floor(6 + h(11) * (m.size - 12));
+    const ry = opts.y !== undefined ? opts.y : Math.floor(6 + h(12) * (m.size - 12));
+    const now = this.time;
+    this.events = this.events || [];
+    switch (type) {
+      case 'storm': {
+        const e = { type, x: rx, y: ry, r: opts.r || 16, start: now, until: now + (opts.dur || 15) };
+        this.events.push(e);
+        this.msg('⛈ BOUŘKA s vichřicí u [' + e.x + ',' + e.y + ']! Venkovní vedení v ohrožení, větrníky se odstavují.', 'warn');
+        return e;
+      }
+      case 'ice': {
+        const e = { type, x: rx, y: ry, r: opts.r || 18, start: now, until: now + (opts.dur || 25) };
+        this.events.push(e);
+        this.msg('🧊 NÁMRAZA u [' + e.x + ',' + e.y + '] – vedení v oblasti ztrácí kapacitu.', 'warn');
+        return e;
+      }
+      case 'heat': {
+        const e = { type, start: now, until: now + (opts.dur || 20) };
+        this.events.push(e);
+        this.msg('🥵 VLNA VEDER: uhelným a jaderným elektrárnám chybí chladicí voda (−30 %), spotřeba roste.', 'warn');
+        return e;
+      }
+      case 'eclipse': {
+        const e = { type, start: opts.start !== undefined ? opts.start : now, until: (opts.start !== undefined ? opts.start : now) + (opts.dur || 4) };
+        this.events.push(e);
+        this.msg('🌑 ZATMĚNÍ SLUNCE – solární parky na chvíli vypadnou!', 'warn');
+        return e;
+      }
+      case 'flood': {
+        // povodeň: poškodí stavby u řeky; existující přehrada území chrání
+        if (this.buildings.some((b) => b.kind === 'dam')) {
+          this.msg('🌊 Jarní povodeň – přehrady ji zachytily, síť bez škod.');
+          return null;
+        }
+        const TT = T();
+        let hit = 0;
+        for (const b of this.buildings) {
+          if (b.kind === 'dam' || b.kind === 'hydro' || b.kind === 'psh' || b.kind === 'xborder' || !WEAR[b.kind]) continue;
+          let nearRiver = false;
+          for (let dy = -1; dy <= 1 && !nearRiver; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const nx = b.x + dx, ny = b.y + dy;
+            if (nx < 0 || ny < 0 || nx >= m.size || ny >= m.size) continue;
+            if (m.type[m.idx(nx, ny)] === TT.RIVER) { nearRiver = true; break; }
+          }
+          if (nearRiver) { b.broken = true; b.cond = Math.min(b.cond, 0.3); hit++; }
+        }
+        this.msg('🌊 POVODEŇ! Poškozeno ' + hit + ' staveb u řek. Přehrady by příště pomohly.', hit ? 'warn' : 'info');
+        return hit;
+      }
+      case 'beetle': {
+        const TT = T();
+        let conv = 0;
+        const r = opts.r || 9;
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.hypot(dx, dy) > r) continue;
+          const nx = rx + dx, ny = ry + dy;
+          if (nx < 0 || ny < 0 || nx >= m.size || ny >= m.size) continue;
+          const j = m.idx(nx, ny);
+          if (m.type[j] === TT.FOREST) { m.type[j] = TT.GRASS; conv++; }
+        }
+        if (conv > 0 && EG.onTerrainChanged) EG.onTerrainChanged();
+        this.msg('🪲 Kůrovcová kalamita u [' + rx + ',' + ry + '] – padlo ' + conv + ' dlaždic lesa.', 'warn');
+        return conv;
+      }
+      case 'subsidy': {
+        const e = { type, start: now, until: now + (opts.dur || this.dayLen * 3) };
+        this.events.push(e);
+        this.msg('🌱 DOTAČNÍ PROGRAM: solár a vítr se staví o 30 % levněji (po jednu sezónu)!');
+        return e;
+      }
+    }
+    return null;
+  };
+
+  Sim.prototype.activeEvents = function (type) {
+    return (this.events || []).filter((e) => e.type === type && this.time >= e.start && this.time < e.until);
+  };
+
+  Sim.prototype._inZone = function (e, x, y) {
+    return Math.hypot(e.x - x, e.y - y) <= e.r;
+  };
+
+  const distToSegSim = (px, py, x1, y1, x2, y2) => {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 ? ((px - x1) * dx + (py - y1) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  };
+
   /* hlavní tick simulace – dt v herních sekundách */
   Sim.prototype.tick = function (dt) {
     this.time += dt;
@@ -910,6 +1014,29 @@
       daylight: 12 + 4.5 * cosAt(0.375), // délka dne v hodinách: léto 16,5 · zima 7,5
     };
 
+    // --- denní losování událostí (deterministicky ze seedu) ---
+    this.events = this.events || [];
+    const dayNow = Math.floor(this.time / this.dayLen) + 1;
+    if (this._lastDay !== dayNow) {
+      this._lastDay = dayNow;
+      const roll = (k) => EG.rng.hash2(dayNow * 31 + k, 5, this.map.seed + 2);
+      const season = SEASONS[Math.floor(((this.time % yearLen) / yearLen) * 4) % 4];
+      if (this.time > 5) { // první den nechat na rozkoukání
+        if (roll(1) < ((season === 'léto' || season === 'podzim') ? 0.28 : 0.14)) this.triggerEvent('storm');
+        if (season === 'zima' && roll(2) < 0.30) this.triggerEvent('ice');
+        if (season === 'léto' && roll(3) < 0.25) this.triggerEvent('heat', { dur: 30 });
+        if (roll(4) < 0.03) this.triggerEvent('eclipse', { start: (dayNow - 1) * this.dayLen + 0.29 * this.dayLen, dur: 5 });
+        if (season === 'jaro' && (this._hydroYearFx || 1) > 1.15 && roll(5) < 0.5 && this._floodYear !== this._hydroYearIdx) {
+          this._floodYear = this._hydroYearIdx;
+          this.triggerEvent('flood');
+        }
+        if (roll(6) < 0.05) this.triggerEvent('beetle');
+        if (roll(7) < 0.08 && this.activeEvents('subsidy').length === 0) this.triggerEvent('subsidy');
+      }
+      this.events = this.events.filter((e) => e.until === undefined || e.until > this.time - 60);
+    }
+    this._heatActive = this.activeEvents('heat').length > 0;
+
     // suché a mokré roky: každý rok má vlastní hydrologii (0,75–1,25×)
     const yearIdx = Math.floor(this.time / yearLen);
     if (this._hydroYearIdx !== yearIdx) {
@@ -922,11 +1049,12 @@
     }
     this.seasonFx.hydro *= this._hydroYearFx;
 
-    // slunce: půlvlna kolem 13:00, šířka podle sezónní délky dne
+    // slunce: půlvlna kolem 13:00, šířka podle sezónní délky dne; zatmění ho zhasne
     const h = (6 + dayPhase * 24) % 24;
     const dh = Math.min(Math.abs(h - 13), 24 - Math.abs(h - 13));
-    const sun = dh <= this.seasonFx.daylight / 2
+    let sun = dh <= this.seasonFx.daylight / 2
       ? Math.cos(Math.PI * dh / this.seasonFx.daylight) : 0;
+    if (this.activeEvents('eclipse').length > 0) sun = 0;
     const wind = Math.max(0, Math.min(1.6,
       (0.35 + 0.65 * EG.rng.fbm(this.time * 0.01 + this._noiseT, 3.7, 42, 3)) * this.seasonFx.wind));
     this.sun = sun; this.wind = wind; this.dayPhase = dayPhase;
@@ -942,6 +1070,19 @@
     for (let i = 0; i < n; i++) {
       wantGen[i] = this._genOf(nodes[i], sun, wind);
       nodes[i].gen = wantGen[i];
+    }
+
+    // bouřka: větrné turbíny v zóně se bezpečnostně odstavují
+    const storms = this.activeEvents('storm');
+    const ices = this.activeEvents('ice');
+    if (storms.length) {
+      for (let i = 0; i < n; i++) {
+        const b = nodes[i];
+        if ((b.kind === 'wind' || b.kind === 'owind') && storms.some((e) => this._inZone(e, b.x, b.y))) {
+          wantGen[i] = 0;
+          b.gen = 0;
+        }
+      }
     }
 
     const buses = [];        // {bi: index stavby, lv: úroveň}
@@ -964,8 +1105,29 @@
       const b = bi === undefined ? undefined : busOf.get(bi + ':' + l.level);
       l.flow = 0; l.load = 0; l.loss = 0;
       if (a === undefined || b === undefined) continue;
+      // výpadek po zásahu bouřkou: vedení je odpojené, než se bouřka přežene
+      if (l.trippedUntil && l.trippedUntil > this.time) continue;
       // jalový výkon: dlouhé střídavé vedení bez kompenzace ztrácí 20 % kapacity
       l.effCap = l.cap;
+      // počasí: bouřka a námraza srážejí kapacitu venkovních vedení v zóně
+      if (!l.cable) {
+        const aB = nodes[ai], bB = nodes[bi];
+        for (const e of storms) {
+          if (distToSegSim(e.x, e.y, aB.x, aB.y, bB.x, bB.y) <= e.r) {
+            l.effCap *= 0.5;
+            if (Math.random() < dt * 0.08) {
+              l.trippedUntil = e.until;
+              this.msg('⛈ Bouřka odpojila vedení ' + LINE_TYPES[l.level].name + ' [' +
+                aB.x + ',' + aB.y + ']–[' + bB.x + ',' + bB.y + ']!', 'warn');
+            }
+            break;
+          }
+        }
+        for (const e of ices) {
+          if (distToSegSim(e.x, e.y, aB.x, aB.y, bB.x, bB.y) <= e.r) { l.effCap *= 0.7; break; }
+        }
+      }
+      if (l.trippedUntil && l.trippedUntil > this.time) continue;
       if (!l.cable && l.level !== 500 && l.len > LINE_TYPES[l.level].maxLen * 0.6) {
         const aC = nodes[ai], bC = nodes[bi];
         const compensated = (aC.kind === 'sub' && aC.compensator) || (bC.kind === 'sub' && bC.compensator);
