@@ -194,7 +194,9 @@ body.photo #bpanel { display: none !important; }
   pointer-events: auto; cursor: pointer;
   text-shadow: 0 1px 3px rgba(0,0,0,0.9);
 }
-#log div:hover { text-decoration: underline; }
+#log div.loc { cursor: pointer; }
+#log div.loc:hover { text-decoration: underline; color: #cfe4f5; }
+#log div:not(.loc) { cursor: default; }
 #log .info { color: #b9c7d3; }
 #log .warn { color: #ffb14d; }
 

@@ -222,9 +222,24 @@
     }
   }
 
-  Sim.prototype.msg = function (text, kind) {
-    this.messages.push({ text, kind: kind || 'info', t: this.time });
+  /* zpráva do logu; `at` je volitelný cíl ({x,y} nebo objekt s x/y) –
+     klik na hlášku pak skočí kamerou na místo problému */
+  Sim.prototype.msg = function (text, kind, at) {
+    const m = { text, kind: kind || 'info', t: this.time };
+    if (at && at.x !== undefined && at.y !== undefined) {
+      m.x = Math.round(at.x);
+      m.y = Math.round(at.y);
+    }
+    this.messages.push(m);
     if (this.messages.length > 60) this.messages.shift();
+  };
+
+  /* střed vedení pro cílení zpráv */
+  Sim.prototype._lineMid = function (l) {
+    const a = this.buildings.find((o) => o.id === l.a);
+    const b = this.buildings.find((o) => o.id === l.b);
+    if (!a || !b) return null;
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   };
 
   Sim.prototype.buildingAt = function (x, y) {
@@ -949,7 +964,8 @@
     if (critical.length === 0) {
       this.msg('N-1: síť přežije výpadek libovolného vedení ✓');
     } else {
-      this.msg('N-1: ' + critical.length + ' kritických vedení (blikají) – dostav zálohy!', 'warn');
+      this.msg('N-1: ' + critical.length + ' kritických vedení (blikají) – dostav zálohy!', 'warn',
+        this._lineMid(critical[0]));
     }
     return { checked: this.lines.length, critical: critical.length };
   };
@@ -970,13 +986,13 @@
       case 'storm': {
         const e = { type, x: rx, y: ry, r: opts.r || 16, start: now, until: now + (opts.dur || 15) };
         this.events.push(e);
-        this.msg('⛈ BOUŘKA s vichřicí u [' + e.x + ',' + e.y + ']! Venkovní vedení v ohrožení, větrníky se odstavují.', 'warn');
+        this.msg('⛈ BOUŘKA s vichřicí u [' + e.x + ',' + e.y + ']! Venkovní vedení v ohrožení, větrníky se odstavují.', 'warn', e);
         return e;
       }
       case 'ice': {
         const e = { type, x: rx, y: ry, r: opts.r || 18, start: now, until: now + (opts.dur || 25) };
         this.events.push(e);
-        this.msg('🧊 NÁMRAZA u [' + e.x + ',' + e.y + '] – vedení v oblasti ztrácí kapacitu.', 'warn');
+        this.msg('🧊 NÁMRAZA u [' + e.x + ',' + e.y + '] – vedení v oblasti ztrácí kapacitu.', 'warn', e);
         return e;
       }
       case 'heat': {
@@ -1024,7 +1040,7 @@
           if (m.type[j] === TT.FOREST) { m.type[j] = TT.GRASS; conv++; }
         }
         if (conv > 0 && EG.onTerrainChanged) EG.onTerrainChanged();
-        this.msg('🪲 Kůrovcová kalamita u [' + rx + ',' + ry + '] – padlo ' + conv + ' dlaždic lesa.', 'warn');
+        this.msg('🪲 Kůrovcová kalamita u [' + rx + ',' + ry + '] – padlo ' + conv + ' dlaždic lesa.', 'warn', { x: rx, y: ry });
         return conv;
       }
       case 'subsidy': {
@@ -1057,7 +1073,7 @@
       name: k.label + ' Nová' + (k.type === 'data' ? ' (24/7, přísné SLA)' : ''),
       demand: k.demand, powered: 0, downTime: 0,
     });
-    this.msg('🏗 Spolehlivá síť láká investory: otevírá se ' + k.label + ' u [' + spot[0] + ',' + spot[1] + ']!');
+    this.msg('🏗 Spolehlivá síť láká investory: otevírá se ' + k.label + ' u [' + spot[0] + ',' + spot[1] + ']!', 'info', { x: spot[0], y: spot[1] });
   };
 
   /* zakázka: připoj nový podnik do roka, odměna */
@@ -1071,7 +1087,7 @@
       mission: true, deadline: this.time + this.dayLen * YEAR_DAYS, reward: 1500,
     };
     m.industries.push(ind);
-    this.msg('📜 ZAKÁZKA: připoj „' + ind.name + '" [' + ind.x + ',' + ind.y + '] do roka – odměna 1 500 €!', 'warn');
+    this.msg('📜 ZAKÁZKA: připoj „' + ind.name + '" [' + ind.x + ',' + ind.y + '] do roka – odměna 1 500 €!', 'warn', ind);
   };
 
   Sim.prototype._findIndustrySpot = function () {
@@ -1250,7 +1266,8 @@
             if (this._rng() < dt * 0.08) {
               l.trippedUntil = e.until;
               this.msg('⛈ Bouřka odpojila vedení ' + LINE_TYPES[l.level].name + ' [' +
-                aB.x + ',' + aB.y + ']–[' + bB.x + ',' + bB.y + ']!', 'warn');
+                aB.x + ',' + aB.y + ']–[' + bB.x + ',' + bB.y + ']!', 'warn',
+                { x: (aB.x + bB.x) / 2, y: (aB.y + bB.y) / 2 });
             }
             break;
           }
@@ -1632,8 +1649,15 @@
     if ((overloaded > 0 || overloadedTrafos > 0) && Math.floor(this.time) % 5 === 0 &&
         this._lastOverloadWarn !== Math.floor(this.time)) {
       this._lastOverloadWarn = Math.floor(this.time);
-      if (overloaded > 0) this.msg('Vedení přetíženo! Postav paralelní trasu nebo vyšší napětí.', 'warn');
-      if (overloadedTrafos > 0) this.msg('Trafo přetíženo! Přikup další kus do rozvodny.', 'warn');
+      if (overloaded > 0) {
+        const ol = this.lines.find((l2) => l2.load > 1);
+        this.msg('Vedení přetíženo! Postav paralelní trasu nebo vyšší napětí.', 'warn', ol && this._lineMid(ol));
+      }
+      if (overloadedTrafos > 0) {
+        const os = this.buildings.find((b2) => b2.kind === 'sub' &&
+          Object.values(b2.trafoLoad || {}).some((v) => v > 1));
+        this.msg('Trafo přetíženo! Přikup další kus do rozvodny.', 'warn', os);
+      }
     }
 
     // --- průmysl: stav napájení, spolehlivost, zakázky, hlášení odstávek ---
@@ -1648,18 +1672,18 @@
       if (ind.mission) {
         if (ratio > 0.9) {
           this.money += ind.reward;
-          this.msg('📜 ZAKÁZKA SPLNĚNA: ' + ind.name + ' připojena, odměna +' + ind.reward + ' €!');
+          this.msg('📜 ZAKÁZKA SPLNĚNA: ' + ind.name + ' připojena, odměna +' + ind.reward + ' €!', 'info', ind);
           ind.mission = false;
         } else if (this.time > ind.deadline) {
           ind.mission = false;
-          this.msg('📜 Zakázka propadla: ' + ind.name + ' se nedočkala přípojky.', 'warn');
+          this.msg('📜 Zakázka propadla: ' + ind.name + ' se nedočkala přípojky.', 'warn', ind);
         }
       }
       if (ratio < 0.9) {
         ind.downTime += dt;
         if (ind.downTime > 15 && !ind._warned) {
           ind._warned = true;
-          this.msg(ind.name + ' stojí bez proudu! (potřebuje VN přípojku z rozvodny)', 'warn');
+          this.msg(ind.name + ' stojí bez proudu! (potřebuje VN přípojku z rozvodny)', 'warn', ind);
         }
       } else {
         ind.downTime = 0;
@@ -1686,7 +1710,7 @@
         if (this._rng() < dt * growRate && c.pop < 60) {
           c.pop += 1;
           this._syncHouses(c);
-          this.msg(c.name + ' se rozrostlo na ' + c.pop + ' tis. obyvatel');
+          this.msg(c.name + ' se rozrostlo na ' + c.pop + ' tis. obyvatel', 'info', c);
         }
       } else {
         c.satisfaction = Math.max(0, c.satisfaction - dt * (0.05 + 0.1 * (1 - ratio)));
@@ -1714,7 +1738,7 @@
           const wasWarm = b.warm > 0.5;
           b.warm = Math.max(0, b.warm - dt / 60);
           if (wasWarm && b.warm <= 0.5) {
-            this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] chladne – opětovné najetí potrvá', 'info');
+            this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] chladne – opětovné najetí potrvá', 'info', b);
           }
         }
       }
@@ -1728,10 +1752,10 @@
       if (b.fuel > 0 && gen[i] > 0) {
         b.fuel = Math.max(0, b.fuel - fd.perMW * gen[i] * dt);
         if (b.fuel === 0) {
-          this.msg('DOŠLO PALIVO: ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] stojí!', 'warn');
+          this.msg('DOŠLO PALIVO: ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] stojí!', 'warn', b);
         } else if (b.fuel < fd.cap * 0.2 && !b._fuelWarned) {
           b._fuelWarned = true;
-          this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + ']: palivo pod 20 %', 'warn');
+          this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + ']: palivo pod 20 %', 'warn', b);
         } else if (b.fuel >= fd.cap * 0.2) {
           b._fuelWarned = false;
         }
@@ -1753,7 +1777,7 @@
         l.cond = Math.min(1, l.cond + 0.15 * dt);
         if (l.broken && l.cond >= 0.5) {
           l.broken = false;
-          this.msg('Vedení ' + LINE_TYPES[l.level].name + ' opraveno v rámci smlouvy rozvodny');
+          this.msg('Vedení ' + LINE_TYPES[l.level].name + ' opraveno v rámci smlouvy rozvodny', 'info', this._lineMid(l));
         }
         continue;
       }
@@ -1761,7 +1785,7 @@
       l.cond = Math.max(0, l.cond - 0.0005 * (0.4 + 0.6 * Math.min(1, l.load)) * dt * (this.hardMode ? 1.5 : 1));
       if (l.cond < 0.15 && this._rng() < dt * (0.15 - l.cond) * 0.8) {
         l.broken = true;
-        this.msg('PORUCHA VEDENÍ: zestárlá trasa ' + LINE_TYPES[l.level].name + ' vypadla – potřebuje servis!', 'warn');
+        this.msg('PORUCHA VEDENÍ: zestárlá trasa ' + LINE_TYPES[l.level].name + ' vypadla – potřebuje servis!', 'warn', this._lineMid(l));
       }
     }
 
@@ -1776,7 +1800,7 @@
         b.cond = Math.min(1, b.cond + 0.15 * dt);
         if (b.broken && b.cond >= 0.5) {
           b.broken = false;
-          this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] opravena v rámci servisní smlouvy');
+          this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] opravena v rámci servisní smlouvy', 'info', b);
         }
         continue;
       }
@@ -1791,7 +1815,7 @@
         // zanedbaná budova může selhat úplně
         if (b.cond < 0.2 && this._rng() < dt * (0.2 - b.cond) * 0.6) {
           b.broken = true;
-          this.msg('PORUCHA: ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] je mimo provoz!', 'warn');
+          this.msg('PORUCHA: ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] je mimo provoz!', 'warn', b);
         }
       }
     }
@@ -1823,7 +1847,7 @@
           if (this._xPenWarnT !== Math.floor(this.time / 7)) {
             this._xPenWarnT = Math.floor(this.time / 7);
             this.msg('SANKCE: ' + b.name + ' – nedodáváš sjednaný export (' +
-              b.xServed.toFixed(0) + '/' + b.xExport + ' MW)!', 'warn');
+              b.xServed.toFixed(0) + '/' + b.xExport + ' MW)!', 'warn', b);
           }
         }
       }
