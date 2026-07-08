@@ -621,6 +621,108 @@ const server = http.createServer((req, res) => {
   if (!industry.buildOnIndRejected) throw new Error('na průmyslovém areálu jde stavět');
   if (!industry.shiftOk || !industry.contOk) throw new Error('směnné profily průmyslu nefungují');
 
+  // --- nové zdroje, merit order, retrofit, konzervace, 5 úrovní ---
+  const sources = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    // pravidla umístění
+    let nukeSpot = null, geoOk = null, owindSpot = null, bioSpot = null;
+    for (let y = 0; y < map.size && !(nukeSpot && owindSpot && bioSpot); y++)
+      for (let x = 0; x < map.size; x++) {
+        if (!nukeSpot && sim.canPlace('nuclear', x, y).ok) nukeSpot = [x, y];
+        if (!owindSpot && sim.canPlace('owind', x, y).ok) owindSpot = [x, y];
+        if (!bioSpot && sim.canPlace('bio', x, y).ok) bioSpot = [x, y];
+      }
+    geoOk = map.geoFields.length >= 2 && sim.canPlace('geo', map.geoFields[0].x, map.geoFields[0].y).ok;
+    const geoOnGrass = sim.canPlace('geo', bioSpot[0], bioSpot[1]).ok; // mimo pole musí selhat
+    const nuke = sim.place('nuclear', nukeSpot[0], nukeSpot[1]);
+    const geo = sim.place('geo', map.geoFields[0].x, map.geoFields[0].y);
+    sim.tick(0.05);
+    const nukeGen = nuke.gen, geoGen = geo.gen;
+
+    // merit order: hydro (0) jede před plynem (3)
+    const map2 = EG.generateMap(160, 42);
+    const sim2 = new EG.Sim(map2);
+    sim2.money = 1000000;
+    // najdi město s řekou do 20 dlaždic (města se generují u řek)
+    let c = null, hydro = null;
+    for (const cc of map2.cities) {
+      let best = null, bd = Infinity;
+      for (let dy = -20; dy <= 20; dy++) for (let dx = -20; dx <= 20; dx++) {
+        const x = cc.x + dx, y = cc.y + dy;
+        if (x < 0 || y < 0 || x >= map2.size || y >= map2.size) continue;
+        if (map2.type[map2.idx(x, y)] !== EG.T.RIVER || !sim2.canPlace('hydro', x, y).ok) continue;
+        const d = Math.hypot(dx, dy);
+        if (d < bd) { bd = d; best = [x, y]; }
+      }
+      if (best) { c = cc; hydro = best; break; }
+    }
+    if (!c) return { fail: 'žádné město u řeky' };
+    let sub = null;
+    for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim2.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim2.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    for (const k of ['t110_22', 't22_04']) sim2.buyTrafo(sub, k);
+    let gasP = null;
+    for (let r = 1; r <= 6 && !gasP; r++)
+      for (let dy = -r; dy <= r && !gasP; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim2.canPlace('gas', sub.x + dx, sub.y + dy).ok) { gasP = sim2.place('gas', sub.x + dx, sub.y + dy); break; }
+    const hydroB = sim2.place('hydro', hydro[0], hydro[1]);
+    sim2.connect(hydroB, sub, 110);
+    sim2.connect(gasP, sub, 110);
+    for (let i = 0; i < 20; i++) sim2.tick(0.1);
+    const gasIdle = gasP.out;         // poptávka < hydro -> plyn stojí
+    const hydroRuns = hydroB.out;
+    const cr2 = sim2.buildings.find((o) => o.kind === 'xborder');
+    // zvýšit poptávku nad hydro: export ze sousední rozvodny nejde (daleko) -> vypnout hydro
+    hydroB.mothball = true;
+    for (let i = 0; i < 20; i++) sim2.tick(0.1);
+    const gasKicksIn = gasP.out;      // hydro stojí -> plyn najede
+
+    // konzervace: neběží, nestárne
+    const mbCond = hydroB.cond;
+    for (let i = 0; i < 100; i++) sim2.tick(0.1);
+    const mothballOk = hydroB.out === 0 && Math.abs(hydroB.cond - mbCond) < 1e-9;
+    sim2.setMothball(hydroB, false);
+
+    // retrofit uhelné na biomasu
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim2.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim2.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim2.retrofitBiomass(coal);
+    sim2.tick(0.05);
+    const bioName = (EG.fuelDefOf(coal) || {}).name;
+    const bioGen = coal.gen;
+
+    // 5 úrovní modernizace
+    while (sim2.upgradeCost(coal) !== null) sim2.upgrade(coal);
+    const maxLevel = coal.level;
+    const multL5 = EG.levelMult(5);
+
+    return {
+      nukePlaced: !!nuke, nukeGen: +nukeGen.toFixed(0),
+      geoOk, geoOnGrassRejected: !geoOnGrass, geoGen: +geoGen.toFixed(0),
+      owindFound: !!owindSpot, bioFound: !!bioSpot,
+      gasIdle: +gasIdle.toFixed(1), hydroRuns: +hydroRuns.toFixed(1),
+      gasKicksIn: +gasKicksIn.toFixed(1),
+      mothballOk,
+      bioName, bioGen: +bioGen.toFixed(0),
+      maxLevel, multL5,
+    };
+  });
+  console.log('nové zdroje:', JSON.stringify(sources));
+  if (sources.fail) throw new Error(sources.fail);
+  if (!sources.nukePlaced || sources.nukeGen !== 260) throw new Error('jaderná elektrárna nefunguje: ' + sources.nukeGen);
+  if (!sources.geoOk || !sources.geoOnGrassRejected || sources.geoGen !== 25) throw new Error('geotermální pole/elektrárna nefunguje');
+  if (!sources.owindFound || !sources.bioFound) throw new Error('offshore vítr nebo bioplynka nemají kde stát');
+  if (!(sources.gasIdle < 1) || !(sources.hydroRuns > 5)) throw new Error('merit order: plyn běží, i když stačí hydro: ' + sources.gasIdle);
+  if (!(sources.gasKicksIn > 5)) throw new Error('merit order: plyn nenajel při výpadku hydra: ' + sources.gasKicksIn);
+  if (!sources.mothballOk) throw new Error('konzervace nefunguje');
+  if (sources.bioName !== 'štěpka' || sources.bioGen !== 70) throw new Error('retrofit na biomasu nefunguje: ' + sources.bioName + '/' + sources.bioGen);
+  if (sources.maxLevel !== 5 || sources.multL5 !== 1.8) throw new Error('5 úrovní modernizace nefunguje');
+
   // --- napájení ze dvou stran: zátěž se rozloží a nepřetěžuje jednu trasu ---
   const dispatch = await page.evaluate(() => {
     const map = EG.generateMap(160, 42);

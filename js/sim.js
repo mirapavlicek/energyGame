@@ -48,6 +48,35 @@
       desc: 'Bateriové úložiště 80 MWs: nabíjí se z přebytků, vybíjí při deficitu (účinnost 90 %). Připojení 22 kV.',
       hotkey: '9',
     },
+    nuclear: {
+      name: 'Jaderná elektrárna', cost: 2600, upkeep: 30,
+      desc: 'Jen u velké řeky (chladicí voda). Stabilních 260 MW na 800 kV, palivo vydrží roky.',
+      hotkey: '0',
+    },
+    gas: {
+      name: 'Plynová elektrárna', cost: 420, upkeep: 6,
+      desc: 'Špičkový zdroj 60 MW (110 kV): najíždí, až když levnější zdroje nestačí. Drahý plyn.',
+    },
+    geo: {
+      name: 'Geotermální elektrárna', cost: 520, upkeep: 2,
+      desc: 'Jen na geotermálním poli (kouřící značka). Stabilních 25 MW, minimální provoz.',
+    },
+    bio: {
+      name: 'Bioplynka', cost: 200, upkeep: 1.5,
+      desc: 'Na louce s dostatkem zeleně v okolí. Stabilních 12 MW z místní biomasy (22 kV).',
+    },
+    waste: {
+      name: 'Spalovna odpadu', cost: 480, upkeep: 4,
+      desc: 'Výkon podle populace měst do 15 dlaždic (0,25 MW/tis., max 40 MW). Palivo zdarma – odpad.',
+    },
+    owind: {
+      name: 'Větrník na vodě', cost: 260, upkeep: 2,
+      desc: 'Jen na jezeře. Stabilnější a silnější vítr než na pevnině (22 kV).',
+    },
+    h2: {
+      name: 'Vodíkové úložiště', cost: 900, upkeep: 3,
+      desc: 'Elektrolyzér + vodíková turbína: obří zásobník 1200 MWs, ±40 MW, účinnost 45 % (110 kV). Sezónní ukládání.',
+    },
     xborder: {
       name: 'Přeshraniční bod', cost: 0, upkeep: 0, hidden: true,
       desc: 'Napojení na sousední soustavu (400 kV). Klikni a sjednej smlouvy na nákup/prodej energie.',
@@ -75,7 +104,23 @@
   };
 
   /* výstupní napětí elektráren – vedení k nim musí mít stejnou úroveň */
-  const GEN_LEVEL = { dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22, psh: 110, battery: 22, xborder: 400 };
+  const GEN_LEVEL = {
+    dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22, psh: 110, battery: 22, xborder: 400,
+    nuclear: 800, gas: 110, geo: 22, bio: 22, waste: 22, owind: 22, h2: 110,
+  };
+
+  /* pořadí nasazování zdrojů (merit order): levné jedou první.
+     Obnovitelné 0, sjednaný import 0,4 (platí se tak jako tak),
+     jádro 1, biomasa 1,8, uhlí 2, plyn 3 (špička). */
+  const MERIT = {
+    hydro: 0, dam: 0, solar: 0, wind: 0, owind: 0, geo: 0, bio: 0, waste: 0,
+    xborder: 0.4, nuclear: 1, coal: 2, gas: 3,
+  };
+  const meritOf = (b) => (b.kind === 'coal' && b.bioRetrofit) ? 1.8 : (MERIT[b.kind] !== undefined ? MERIT[b.kind] : 0);
+
+  /* násobič výkonu podle úrovně modernizace (5 úrovní, klesající přírůstek) */
+  const LEVEL_MULT = [1, 1.25, 1.5, 1.65, 1.8];
+  const levelMult = (lvl) => LEVEL_MULT[Math.min(LEVEL_MULT.length, lvl) - 1];
 
   /* Přeshraniční obchod: smlouvy v obou směrech, krok 10 MW, strop 120 MW.
      Import je „take-or-pay" – platíš sjednaný výkon, i když ho nevyužiješ.
@@ -92,6 +137,7 @@
   const STORAGE = {
     psh: { cap: 300, maxP: 70, eff: 0.75 },
     battery: { cap: 80, maxP: 25, eff: 0.90 },
+    h2: { cap: 1200, maxP: 40, eff: 0.45 }, // vodík: obří, ale ztrátový (sezónní)
   };
 
   /* regulační trafo (přepínač odboček): násobí „vodivost" trafa v power flow */
@@ -124,15 +170,24 @@
      Bez paliva elektrárna stojí – nakupuje se v panelu (nebo smlouvou). */
   const FUEL = {
     coal: { name: 'uhlí', unit: 't', cap: 240, perMW: 0.0045, price: 4 },
+    biomass: { name: 'štěpka', unit: 't', cap: 300, perMW: 0.006, price: 1.6 },
+    gas: { name: 'plyn', unit: 'MWh', cap: 400, perMW: 0.011, price: 1.2 },
+    nuclear: { name: 'palivové soubory', unit: 'ks', cap: 12, perMW: 0.000016, price: 120 },
   };
+  /* palivo budovy (uhelná po retrofitu jede na štěpku) */
+  const fuelDef = (b) => (b.kind === 'coal' && b.bioRetrofit) ? FUEL.biomass : FUEL[b.kind];
 
   const SUB_RANGE = 6;        // dosah rozvodny k městu (NN distribuce)
   const PRICE_PER_MWH = 0.055; // příjem za dodanou MW za sekundu hry
 
-  const MAX_LEVEL = 3;        // max. úroveň modernizace
+  const MAX_LEVEL = 5;        // max. úroveň modernizace
   const MAX_RANGE_LEVEL = 2;  // max. rozšíření dosahu rozvodny (+2 dlaždice / úroveň)
   /* rychlost opotřebení – ztráta stavu za herní sekundu při plném vytížení */
-  const WEAR = { hydro: 0.0011, dam: 0.0006, coal: 0.0018, solar: 0.0008, wind: 0.0014, sub: 0.0007, psh: 0.0008, battery: 0.0012 };
+  const WEAR = {
+    hydro: 0.0011, dam: 0.0006, coal: 0.0018, solar: 0.0008, wind: 0.0014, sub: 0.0007,
+    psh: 0.0008, battery: 0.0012, nuclear: 0.0007, gas: 0.0015, geo: 0.0006, bio: 0.0012,
+    waste: 0.0014, owind: 0.0016, h2: 0.0010,
+  };
 
   const SEASONS = ['jaro', 'léto', 'podzim', 'zima'];
   const YEAR_DAYS = 12;       // herních dní v roce (3 na sezónu)
@@ -201,7 +256,38 @@
         return { ok: true };
       case 'sub':
       case 'battery':
+      case 'gas':
+      case 'waste':
+      case 'h2':
         if (t === TT.WATER || t === TT.RIVER || t === TT.MOUNTAIN) return { ok: false, why: 'Jen na pevnině' };
+        return { ok: true };
+      case 'nuclear': {
+        if (t === TT.WATER || t === TT.RIVER || t === TT.MOUNTAIN) return { ok: false, why: 'Jen na pevnině' };
+        for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= m.size || ny >= m.size) continue;
+          if (m.type[m.idx(nx, ny)] === TT.RIVER && m.flow[m.idx(nx, ny)] >= 6) return { ok: true };
+        }
+        return { ok: false, why: 'Potřebuje velkou řeku do 2 dlaždic (chladicí voda)' };
+      }
+      case 'geo': {
+        if ((m.geoFields || []).some((g) => g.x === x && g.y === y)) return { ok: true };
+        return { ok: false, why: 'Jen na geotermálním poli' };
+      }
+      case 'bio': {
+        if (t !== TT.GRASS) return { ok: false, why: 'Jen na louce' };
+        let green = 0;
+        for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= m.size || ny >= m.size) continue;
+          const nt = m.type[m.idx(nx, ny)];
+          if (nt === TT.GRASS || nt === TT.FOREST) green++;
+        }
+        if (green < 20) return { ok: false, why: 'Málo zeleně v okolí (biomasa)' };
+        return { ok: true };
+      }
+      case 'owind':
+        if (t !== TT.WATER) return { ok: false, why: 'Jen na jezeře' };
         return { ok: true };
       case 'psh': {
         if (t !== TT.HILL) return { ok: false, why: 'Jen na kopci' };
@@ -498,7 +584,7 @@
 
   /* nákup paliva: doplní sklad (nebo kolik peníze dovolí) */
   Sim.prototype.fuelCost = function (b, auto) {
-    const fd = FUEL[b.kind];
+    const fd = fuelDef(b);
     if (!fd) return null;
     const missing = fd.cap - b.fuel;
     if (missing < 1) return 0;
@@ -506,7 +592,7 @@
   };
 
   Sim.prototype.buyFuel = function (b, auto) {
-    const fd = FUEL[b.kind];
+    const fd = fuelDef(b);
     if (!fd) { this.msg('Tahle stavba palivo nepotřebuje', 'warn'); return false; }
     const unitPrice = fd.price * (auto ? 1.15 : 1);
     const missing = fd.cap - b.fuel;
@@ -540,6 +626,26 @@
     return true;
   };
 
+  /* retrofit uhelné na biomasu: nižší výkon, levnější a čistší palivo */
+  Sim.prototype.retrofitBiomass = function (b) {
+    if (b.kind !== 'coal' || b.bioRetrofit) { this.msg('Retrofit jde jen u uhelné elektrárny', 'warn'); return false; }
+    const cost = 300;
+    if (this.money < cost) { this.msg('Nedostatek peněz na retrofit', 'warn'); return false; }
+    this.money -= cost;
+    b.bioRetrofit = true;
+    b.fuel = Math.min(b.fuel, FUEL.biomass.cap * 0.5);
+    this.msg('Uhelná elektrárna přestavěna na biomasu (70 MW, štěpka) (−' + cost + ')');
+    return true;
+  };
+
+  /* konzervace: zařízení stojí, neopotřebovává se, provoz jen 25 % */
+  Sim.prototype.setMothball = function (b, on) {
+    if (b.kind === 'sub' || b.kind === 'xborder') return false;
+    b.mothball = !!on;
+    this.msg(BUILD[b.kind].name + (b.mothball ? ' zakonzervována (neběží, provoz 25 %)' : ' opět v provozu'));
+    return true;
+  };
+
   Sim.prototype.rangeUpgradeCost = function (b) {
     if (b.kind !== 'sub' || b.rangeLevel >= MAX_RANGE_LEVEL) return null;
     return 80 * (b.rangeLevel + 1);
@@ -559,6 +665,7 @@
   Sim.prototype._baseGenOf = function (b, sun, wind) {
     const m = this.map;
     const fx = this.seasonFx || { hydro: 1, solar: 1 };
+    const hasFuel = b.fuel === undefined || b.fuel > 0;
     switch (b.kind) {
       case 'hydro': {
         const f = m.flow[m.idx(b.x, b.y)] * fx.hydro;
@@ -568,22 +675,41 @@
         const f = m.flow[m.idx(b.x, b.y)] * fx.hydro;
         return Math.min(150, 30 + f * 7 + (b.reservoir || 0) * 3);
       }
-      case 'coal': return (b.fuel === undefined || b.fuel > 0) ? 90 : 0; // bez uhlí stojí
+      case 'coal': return hasFuel ? (b.bioRetrofit ? 70 : 90) : 0; // bez paliva stojí
+      case 'nuclear': return hasFuel ? 260 : 0;
+      case 'gas': return hasFuel ? 60 : 0;
+      case 'geo': return 25;
+      case 'bio': return 12;
+      case 'waste': {
+        // odpad z měst v okolí: 0,25 MW na tisíc obyvatel do 15 dlaždic
+        let pop = 0;
+        for (const c of m.cities) if (Math.hypot(c.x - b.x, c.y - b.y) <= 15) pop += c.pop;
+        return Math.min(40, pop * 0.25);
+      }
       case 'xborder': return b.xImport || 0; // sjednaný import = dostupný zdroj
-      case 'solar': return 35 * sun * fx.solar;
+      case 'solar': {
+        // tracker z modernizace: širší denní křivka
+        const s = Math.pow(sun, 1 / (1 + 0.15 * (b.level - 1)));
+        return 35 * s * fx.solar;
+      }
       case 'wind': {
         const TT = T();
         const t = m.type[m.idx(b.x, b.y)];
         const bonus = (t === TT.HILL || t === TT.MOUNTAIN) ? 1.35 : 1;
         return Math.max(0, 30 * wind * bonus);
       }
+      case 'owind': {
+        // na vodě fouká stabilněji a víc
+        return Math.max(0, 30 * (0.55 + 0.45 * wind) * 1.15);
+      }
       default: return 0;
     }
   };
 
-  /* skutečný výkon: základ × modernizace × technický stav */
+  /* skutečný výkon: základ × modernizace × technický stav (konzervovaná stojí) */
   Sim.prototype._genOf = function (b, sun, wind) {
-    return this._baseGenOf(b, sun, wind) * (1 + 0.25 * (b.level - 1)) * this.condFactor(b);
+    if (b.mothball) return 0;
+    return this._baseGenOf(b, sun, wind) * levelMult(b.level) * this.condFactor(b);
   };
 
   /* Poptávka města v MW – každé město má vlastní potřebu: roste s populací,
@@ -840,13 +966,15 @@
        Přebytek v komponentě nabíjí (zásobník = dodatečný odběr),
        deficit vybíjí (zásobník = zdroj). Výkon omezuje stav zařízení. */
     const storP = new Float64Array(n); // + vybíjí (výroba) / − nabíjí (odběr)
+    const compStorDis = new Float64Array(nc); // vybíjení zásobníků na komponentu
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
       const sd = STORAGE[b.kind];
       if (!sd || genBus[i] < 0) continue;
       b.storMode = 'klid';
+      if (b.mothball) { b.storMode = 'mimo provoz'; continue; }
       const c = comp[genBus[i]];
-      const maxP = sd.maxP * this.condFactor(b) * (1 + 0.25 * (b.level - 1));
+      const maxP = sd.maxP * this.condFactor(b) * levelMult(b.level);
       if (maxP <= 0) continue;
       const bal = compGen[c] - compDem[c];
       if (bal > 0.5 && b.charge < sd.cap - 0.1) {
@@ -858,6 +986,7 @@
         const p = Math.min(maxP, -bal, b.charge / Math.max(1e-6, dt));
         storP[i] = p;
         compGen[c] += p;
+        compStorDis[c] += p;
         b.storMode = 'vybíjí';
       }
     }
@@ -920,12 +1049,19 @@
         const r1 = compDem[c] > 0 ? Math.min(1, compGen[c] / compDem[c]) : 0;
         inj1[xa.bus] -= xa.demand * r1;
       }
-      for (let i = 0; i < n; i++) {
-        if (genBus[i] < 0) continue;
+      // merit order: levné zdroje jedou první, drahé jen na zbytek
+      const need1 = new Float64Array(nc);
+      for (let c = 0; c < nc; c++) need1[c] = Math.max(0, Math.min(compDem[c], compGen[c]) - compStorDis[c]);
+      const order1 = [];
+      for (let i = 0; i < n; i++) if (genBus[i] >= 0 && !STORAGE[nodes[i].kind]) order1.push(i);
+      order1.sort((a, b2) => meritOf(nodes[a]) - meritOf(nodes[b2]));
+      for (const i of order1) {
         const c = comp[genBus[i]];
-        const u1 = compGen[c] > 0 ? Math.min(1, compDem[c] / compGen[c]) : 0;
-        inj1[genBus[i]] += wantGen[i] * u1 + storP[i];
+        const take = Math.min(wantGen[i], need1[c]);
+        need1[c] -= take;
+        inj1[genBus[i]] += take;
       }
+      for (let i = 0; i < n; i++) if (genBus[i] >= 0 && STORAGE[nodes[i].kind]) inj1[genBus[i]] += storP[i];
       solveCG(inj1);
     }
 
@@ -1008,16 +1144,29 @@
         compCharge[c] += -storP[i];
       }
     }
+    // merit order: obnovitelné → import → jádro → uhlí → plyn; drahé zdroje
+    // najíždí jen na zbytek poptávky (odběr + nabíjení zásobníků + ztráty)
+    const plantNeed = new Float64Array(nc);
+    for (let c = 0; c < nc; c++) {
+      plantNeed[c] = Math.max(0, compServed[c] + compCharge[c] + compLoss[c] - compStorDis[c]);
+    }
+    const order = [];
     for (let i = 0; i < n; i++) {
       if (genBus[i] < 0) { nodes[i].out = 0; continue; }
+      if (STORAGE[nodes[i].kind]) continue; // zásobníky řeší dispečink výše
+      order.push(i);
+    }
+    order.sort((a, b2) => meritOf(nodes[a]) - meritOf(nodes[b2]));
+    for (const i of order) {
       const c = comp[genBus[i]];
-      // elektrárny kryjí odběr měst a průmyslu + nabíjení zásobníků + ztráty
-      const useRatio = compGen[c] > 0
-        ? Math.min(1, (compServed[c] + compCharge[c] + compLoss[c]) / compGen[c]) : 0;
-      gen[i] = wantGen[i] * useRatio;
+      gen[i] = Math.min(wantGen[i], plantNeed[c]);
+      plantNeed[c] -= gen[i];
       produced += gen[i];
-      inj[genBus[i]] += gen[i] + storP[i];
+      inj[genBus[i]] += gen[i];
       nodes[i].out = gen[i];
+    }
+    for (let i = 0; i < n; i++) {
+      if (genBus[i] >= 0 && STORAGE[nodes[i].kind]) inj[genBus[i]] += storP[i];
     }
     for (let u = 0; u < nb; u++) inj[u] -= lossAt[u];
     for (let c = 0; c < nc; c++) totalLoss += compLoss[c];
@@ -1123,8 +1272,8 @@
     // --- palivo: spotřeba dle vyrobených MW, došlé palivo zastaví výrobu ---
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
-      const fd = FUEL[b.kind];
-      if (!fd) continue;
+      const fd = fuelDef(b);
+      if (!fd || b.mothball) continue;
       if (b.fuel > 0 && gen[i] > 0) {
         b.fuel = Math.max(0, b.fuel - fd.perMW * gen[i] * dt);
         if (b.fuel === 0) {
@@ -1149,6 +1298,7 @@
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
       if (!WEAR[b.kind]) continue; // předávací body se neopotřebovávají
+      if (b.mothball) continue;    // konzervovaná stavba nestárne
       if (b.contract) {
         // paušální smlouva: průběžná údržba – žádné opotřebení ani poruchy,
         // technici postupně spraví i stávající poškození
@@ -1179,7 +1329,7 @@
     let upkeep = 0;
     const yearLenS = this.dayLen * YEAR_DAYS;
     for (const b of this.buildings) {
-      upkeep += BUILD[b.kind].upkeep * (1 + 0.25 * (b.level - 1));
+      upkeep += BUILD[b.kind].upkeep * levelMult(b.level) * (b.mothball ? 0.25 : 1); // konzervace šetří provoz
       for (const [key, count] of Object.entries(b.trafos || {})) upkeep += TRAFOS[key].cost * 0.004 * count;
       // paušál servisní smlouvy (upkeep se násobí 0,01); modernizace ho zlevňuje
       if (b.contract) upkeep += this.equipValue(b) * this.contractRate(b) * 100 / yearLenS;
@@ -1234,6 +1384,9 @@
   EG.STORAGE = STORAGE;
   EG.TRAFO_REG = TRAFO_REG;
   EG.XTRADE = XTRADE;
+  EG.levelMult = levelMult;
+  EG.meritOf = meritOf;
+  EG.fuelDefOf = fuelDef;
   EG.LEVELS = LEVELS;
   EG.LINE_TYPES = LINE_TYPES;
   EG.GEN_LEVEL = GEN_LEVEL;

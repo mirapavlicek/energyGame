@@ -218,6 +218,20 @@
       });
     }
 
+    // --- geotermální pole: vzácná místa pro geotermální elektrárny ---
+    const geoFields = [];
+    const wantedGeo = Math.max(2, Math.round(3 * Math.sqrt(areaScale)));
+    let geoTries = 0;
+    while (geoFields.length < wantedGeo && geoTries++ < 8000) {
+      const x = 6 + Math.floor(rand() * (N - 12));
+      const y = 6 + Math.floor(rand() * (N - 12));
+      const t = type[idx(x, y)];
+      if (t !== T.GRASS && t !== T.HILL) continue;
+      if (geoFields.some((g) => Math.abs(g.x - x) + Math.abs(g.y - y) < 35)) continue;
+      if (cities.some((c) => Math.abs(c.x - x) + Math.abs(c.y - y) < 8)) continue;
+      geoFields.push({ x, y });
+    }
+
     // --- přeshraniční předávací body: na okrajích mapy, napojení na sousední soustavy ---
     const crossings = [];
     const X_NAMES = ['Bavorsko', 'Sasko', 'Rakousko', 'Polsko', 'Slovensko'];
@@ -237,7 +251,7 @@
       crossings.push({ x, y, name: X_NAMES[crossings.length % X_NAMES.length] });
     }
 
-    return { size: N, type, elev, flow, flowDir, cities, industries, crossings, seed, T, idx };
+    return { size: N, type, elev, flow, flowDir, cities, industries, crossings, geoFields, seed, T, idx };
   }
 
   const CITY_NAMES = [

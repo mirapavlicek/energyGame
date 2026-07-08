@@ -5,7 +5,7 @@
   'use strict';
   const EG = window.EG;
 
-  const CELL_W = 64, CELL_H = 96, COLS = 8, ROWS = 4;
+  const CELL_W = 64, CELL_H = 96, COLS = 8, ROWS = 5;
   const HW = 32, HH = 16;          // poloosy kosočtverce
   const AX = 32, AY = 80;          // kotva (střed dlaždice) uvnitř buňky
 
@@ -13,7 +13,8 @@
     WATER: 0, SAND: 1, GRASS: 2, FOREST: 3, HILL: 4, MOUNTAIN: 5, RIVER: 6, RESERVOIR: 7,
     HOUSE: 8, HOUSE2: 9, CENTER: 10, HYDRO: 11, DAM: 12, COAL: 13, SOLAR: 14, WIND: 15,
     SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22, XBORDER: 23,
-    STAR: 24, PIP: 25,
+    STAR: 24, PIP: 25, NUKE: 26, GASP: 27, GEOTH: 28, BIOG: 29, WASTE: 30, OWIND: 31,
+    H2: 32, GEOFIELD: 33,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -330,6 +331,104 @@
       c.beginPath(); c.arc(AX, AY - 4, 3.2, 0, Math.PI * 2);
       c.fillStyle = '#ffffff'; c.fill();
       c.strokeStyle = 'rgba(0,0,0,0.55)'; c.lineWidth = 1; c.stroke();
+    });
+
+    at(S.NUKE, (c) => {
+      tile(c, '#a3a89a', '#b8bdae', '#868b7d');
+      // chladicí věž (hyperboloid) s párou
+      c.fillStyle = '#d8dde2';
+      c.beginPath();
+      c.moveTo(AX - 11, AY - 2); c.quadraticCurveTo(AX - 4, AY - 22, AX - 8, AY - 40);
+      c.lineTo(AX + 8, AY - 40); c.quadraticCurveTo(AX + 4, AY - 22, AX + 11, AY - 2);
+      c.closePath(); c.fill();
+      c.fillStyle = '#b6bcc4';
+      c.beginPath();
+      c.moveTo(AX + 2, AY - 2); c.quadraticCurveTo(AX + 5, AY - 22, AX + 8, AY - 40);
+      c.lineTo(AX + 8, AY - 40); c.quadraticCurveTo(AX + 4, AY - 22, AX + 11, AY - 2);
+      c.closePath(); c.fill();
+      c.fillStyle = 'rgba(235,235,240,0.85)';
+      c.beginPath(); c.arc(AX - 2, AY - 46, 6, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(AX + 6, AY - 52, 7, 0, Math.PI * 2); c.fill();
+      // reaktorová budova
+      box(c, 8, 4, 8, '#e5e9ee', '#f2f5f8', '#ccd2da', 6);
+      c.fillStyle = '#e8c84a'; c.fillRect(AX - 2, AY - 1, 5, 5);
+      c.fillStyle = '#222'; c.font = '6px sans-serif'; c.fillText('☢', AX - 1, AY + 4);
+    });
+    at(S.GASP, (c) => {
+      tile(c, '#9aa3a0', '#aeb7b4', '#7d8683');
+      box(c, 12, 6, 10, '#5f7d8c', '#b7cdd8', '#8fa9b6');
+      // turbínová hala + tenký komín
+      c.fillStyle = '#77828a'; c.fillRect(AX + 8, AY - 32, 4, 22);
+      c.fillStyle = '#e8a13c';
+      c.beginPath(); c.arc(AX + 10, AY - 34, 3, 0, Math.PI * 2); c.fill(); // plamen
+      c.fillStyle = '#3f5560'; c.fillRect(AX - 9, AY - 8, 6, 6);
+    });
+    at(S.GEOTH, (c) => {
+      tile(c, '#b3a58c', '#c6b89e', '#948870');
+      box(c, 9, 5, 8, '#8c6f56', '#d8c3a5', '#b39a7d');
+      // parní vrty
+      c.strokeStyle = '#c9cdd2'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(AX - 8, AY - 8); c.lineTo(AX - 8, AY - 20); c.stroke();
+      c.beginPath(); c.moveTo(AX + 8, AY - 8); c.lineTo(AX + 8, AY - 16); c.stroke();
+      c.fillStyle = 'rgba(240,240,245,0.8)';
+      c.beginPath(); c.arc(AX - 8, AY - 24, 4, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(AX + 8, AY - 20, 3, 0, Math.PI * 2); c.fill();
+    });
+    at(S.BIOG, (c) => {
+      tile(c, '#7cb35b', '#93c671', '#5f9143');
+      // zelená kopule fermentoru
+      c.fillStyle = '#4c8a44';
+      c.beginPath(); c.arc(AX - 4, AY - 6, 10, Math.PI, 0); c.closePath(); c.fill();
+      c.fillStyle = '#65a85b';
+      c.beginPath(); c.arc(AX - 4, AY - 6, 10, Math.PI, Math.PI * 1.5); c.lineTo(AX - 4, AY - 6); c.closePath(); c.fill();
+      box(c, 6, 3, 6, '#7d6b4f', '#c9b490', '#a08a68', 6);
+    });
+    at(S.WASTE, (c) => {
+      tile(c, '#a8a8a0', '#bcbcb4', '#8a8a82');
+      box(c, 12, 6, 12, '#6e7276', '#aab0b6', '#8b9197');
+      c.fillStyle = '#c2483a'; c.fillRect(AX - 12, AY - 24, 24, 3); // červený pruh
+      c.fillStyle = '#5f5d58'; c.fillRect(AX + 6, AY - 42, 5, 30);
+      c.fillStyle = 'rgba(220,220,220,0.7)';
+      c.beginPath(); c.arc(AX + 9, AY - 46, 4, 0, Math.PI * 2); c.fill();
+    });
+    at(S.OWIND, (c) => {
+      tile(c, '#2e6fa8', '#4b8fc4', '#22557f');
+      c.fillStyle = '#d8b25f';
+      c.beginPath(); c.ellipse(AX, AY - 1, 7, 3, 0, 0, Math.PI * 2); c.fill(); // patka
+      c.strokeStyle = '#e8ecef'; c.lineWidth = 3;
+      c.beginPath(); c.moveTo(AX, AY - 2); c.lineTo(AX, AY - 44); c.stroke();
+      c.fillStyle = '#dfe4e8';
+      for (let b = 0; b < 3; b++) {
+        const a = b * (Math.PI * 2 / 3) + 1.1;
+        c.beginPath();
+        c.moveTo(AX, AY - 44);
+        c.lineTo(AX + Math.cos(a) * 17 - Math.sin(a) * 2, AY - 44 + Math.sin(a) * 17 + Math.cos(a) * 2);
+        c.lineTo(AX + Math.cos(a) * 17 + Math.sin(a) * 2, AY - 44 + Math.sin(a) * 17 - Math.cos(a) * 2);
+        c.closePath(); c.fill();
+      }
+      c.fillStyle = '#c74a3c';
+      c.beginPath(); c.arc(AX, AY - 44, 2.5, 0, Math.PI * 2); c.fill();
+    });
+    at(S.H2, (c) => {
+      tile(c, '#9aa77f', '#aeb992', '#7d8a66');
+      // kulové zásobníky vodíku
+      for (const [ox, r] of [[-8, 7], [4, 9]]) {
+        c.fillStyle = '#dfe6ef';
+        c.beginPath(); c.arc(AX + ox, AY - 10 - r * 0.4, r, 0, Math.PI * 2); c.fill();
+        c.strokeStyle = '#9fb2c2'; c.lineWidth = 1; c.stroke();
+      }
+      c.fillStyle = '#3d6ea5'; c.font = 'bold 9px sans-serif';
+      c.fillText('H₂', AX - 1, AY - 14);
+      box(c, 6, 3, 5, '#7d838c', '#c8cdd4', '#a3a9b2', 6);
+    });
+    at(S.GEOFIELD, (c) => {
+      // značka geotermálního pole – prasklina s párou
+      c.strokeStyle = '#c2703a'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(AX - 8, AY + 3); c.lineTo(AX - 2, AY - 1); c.lineTo(AX + 3, AY + 4); c.lineTo(AX + 9, AY); c.stroke();
+      c.fillStyle = 'rgba(240,240,245,0.7)';
+      c.beginPath(); c.arc(AX - 3, AY - 8, 3, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(AX + 2, AY - 13, 3.6, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(AX + 7, AY - 19, 4.2, 0, Math.PI * 2); c.fill();
     });
 
     at(S.SEL, (c) => {

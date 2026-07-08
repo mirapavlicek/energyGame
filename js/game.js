@@ -36,6 +36,8 @@
     return {
       hydro: S.HYDRO, dam: S.DAM, coal: S.COAL, solar: S.SOLAR, wind: S.WIND,
       sub: S.SUBST, psh: S.PSH, battery: S.BATT, xborder: S.XBORDER,
+      nuclear: S.NUKE, gas: S.GASP, geo: S.GEOTH, bio: S.BIOG, waste: S.WASTE,
+      owind: S.OWIND, h2: S.H2,
     }[kind];
   }
 
@@ -254,7 +256,7 @@
     const tools = [
       { t: 'pan', label: 'Prohlížet', key: 'Q' },
       ...Object.entries(EG.BUILD).filter(([, v]) => !v.hidden).map(([k, v]) => ({
-        t: k, label: v.name, key: v.hotkey.toUpperCase(), cost: v.cost, desc: v.desc,
+        t: k, label: v.name, key: v.hotkey ? v.hotkey.toUpperCase() : '·', cost: v.cost, desc: v.desc,
       })),
       {
         t: 'demolish', label: 'Zbourat', key: 'X',
@@ -510,8 +512,8 @@
       'poškození). Stojí 20 % ceny zařízení ročně – za 5 let jako výměna za nové. U rozvodny včetně traf. ' +
       'Modernizace paušál snižuje o 15 % za úroveň.';
 
-    if (EG.FUEL[b.kind]) {
-      const fd = EG.FUEL[b.kind];
+    if (EG.fuelDefOf(b)) {
+      const fd = EG.fuelDefOf(b);
       const fuel = bpButton('⛽ Koupit ' + fd.name + ' <span class="cost" id="bp-fuel-cost"></span>', '',
         () => sim.buyFuel(b));
       fuel.id = 'bp-btn-fuel';
@@ -576,6 +578,21 @@
       }
     }
 
+    // retrofit uhelné na biomasu
+    if (b.kind === 'coal' && !b.bioRetrofit) {
+      const rf = bpButton('🌿 Retrofit na biomasu <span class="cost">−300</span>', '',
+        () => sim.retrofitBiomass(b));
+      rf.title = 'Přestavba kotle na štěpku: 70 MW místo 90, ale levnější a čistší palivo (bez emisních povolenek).';
+    }
+
+    // konzervace (mothball) – jen výrobny a zásobníky
+    if (b.kind !== 'sub' && b.kind !== 'xborder') {
+      const mb = bpButton('⏻ Konzervace <span class="cost">provoz 25 %</span>', b.mothball ? 'on' : '',
+        () => sim.setMothball(b, !b.mothball));
+      mb.id = 'bp-btn-mothball';
+      mb.title = 'Odstavené zařízení nevyrábí, neopotřebovává se a platí jen čtvrtinový provoz.';
+    }
+
     if (b.kind !== 'dam') {
       bpButton('🗑 Zbourat <span class="cost">+' + Math.floor(EG.BUILD[b.kind].cost * 0.4) + '</span>', 'danger',
         () => { if (sim.demolish(b.x, b.y)) closePanel(); });
@@ -625,7 +642,7 @@
       rows += 'Zásoba: <span class="val">' + Math.round(b.charge) + ' / ' + sd.cap + ' MWs (' + pct + ' %)</span><br>';
       rows += 'Režim: <span class="val">' + b.storMode +
         (Math.abs(b.out) > 0.05 ? ' (' + Math.abs(b.out).toFixed(1) + ' MW)' : '') + '</span><br>';
-      rows += 'Max. výkon: <span class="val">±' + Math.round(sd.maxP * (1 + 0.25 * (b.level - 1))) +
+      rows += 'Max. výkon: <span class="val">±' + Math.round(sd.maxP * EG.levelMult(b.level)) +
         ' MW</span> · účinnost <span class="val">' + Math.round(sd.eff * 100) + ' %</span><br>';
       rows += 'Připojení: <span class="val">' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + '</span><br>';
     } else {
@@ -648,7 +665,7 @@
           ' · sezóna <span class="val">' + seasonPct(fx.wind || 1) + '</span>' +
           ' <span class="dim">(' + (sim.seasonName || '') + ')</span><br>';
       }
-      const fd = EG.FUEL[b.kind];
+      const fd = EG.fuelDefOf(b);
       if (fd) {
         const pct = Math.round(b.fuel / fd.cap * 100);
         const cls = b.fuel <= 0 ? 'bad' : pct < 20 ? 'bad' : '';
@@ -659,9 +676,11 @@
         rows += '<br>';
       }
     }
+    if (b.mothball) rows += '<span class="bad">⏻ KONZERVOVÁNA – nevyrábí</span><br>';
+    if (b.bioRetrofit) rows += 'Palivo po retrofitu: <span class="val">biomasa (štěpka)</span><br>';
     rows += 'Úroveň: <span class="val">' + b.level + ' / ' + EG.MAX_LEVEL + '</span>';
     if (b.kind === 'sub') rows += ' · dosah <span class="val">+' + (b.rangeLevel || 0) * 2 + '</span>';
-    rows += '<br>Provoz: <span class="val">' + (def.upkeep * (1 + 0.25 * (b.level - 1))).toFixed(1) + '/s</span>';
+    rows += '<br>Provoz: <span class="val">' + (def.upkeep * EG.levelMult(b.level) * (b.mothball ? 0.25 : 1)).toFixed(1) + '/s</span>';
     if (b.contract) rows += ' · <span class="val">smlouva ✓ −' + sim.contractYearCost(b) + '/rok</span>';
     if (b.broken) rows += '<br><span class="bad">⚠ PORUCHA – mimo provoz, nutný servis!</span>';
     $('#bp-stats').innerHTML = rows;
@@ -698,13 +717,15 @@
       if (cc) cc.textContent = '−' + sim.contractYearCost(b) + '/rok (' + Math.round(sim.contractRate(b) * 100) + ' %)';
     }
     const fuelBtn = $('#bp-btn-fuel');
-    if (fuelBtn && EG.FUEL[b.kind]) {
+    if (fuelBtn && EG.fuelDefOf(b)) {
       const c = sim.fuelCost(b);
       $('#bp-fuel-cost').textContent = c === 0 ? 'plný sklad' : '−' + c;
-      fuelBtn.disabled = c === 0 || sim.money < EG.FUEL[b.kind].price;
+      fuelBtn.disabled = c === 0 || sim.money < EG.fuelDefOf(b).price;
     }
     const fcBtn = $('#bp-btn-fuelcontract');
     if (fcBtn) fcBtn.classList.toggle('on', !!b.fuelContract);
+    const mbBtn = $('#bp-btn-mothball');
+    if (mbBtn) mbBtn.classList.toggle('on', !!b.mothball);
 
     // schéma rozvodny: přípojnice a toky výkonu
     const schema = $('#bp-schema');
@@ -769,7 +790,7 @@
       if (b.kind !== 'sub') s += ' (' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + ')';
       s += ' ' + b.out.toFixed(0) + '/' + b.gen.toFixed(0) + ' MW';
       s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round(b.cond * 100) + ' %';
-      const fd = EG.FUEL[b.kind];
+      const fd = EG.fuelDefOf(b);
       if (fd) s += b.fuel > 0 ? ' · ' + fd.name + ' ' + Math.round(b.fuel / fd.cap * 100) + ' %' : ' · BEZ PALIVA';
       const sd = EG.STORAGE[b.kind];
       if (sd) s += ' · zásoba ' + Math.round(b.charge / sd.cap * 100) + ' % · ' + b.storMode;
@@ -930,6 +951,9 @@
       }
       spr.push([c.x, c.y, S.CENTER, c]);
     }
+    for (const g of map.geoFields || []) {
+      if (!sim.buildingAt(g.x, g.y)) renderer.pushSprite(g.x, g.y, S.GEOFIELD, 1, 1, 1, 0.9);
+    }
     for (const ind of map.industries || []) spr.push([ind.x, ind.y, S.FACTORY, null, null, ind]);
     for (const b of sim.buildings) spr.push([b.x, b.y, kindSprite(b.kind), null, b]);
     spr.sort((p, q) => (p[0] + p[1]) - (q[0] + q[1]));
@@ -1019,7 +1043,7 @@
         renderer.pushSprite(b.x, b.y, S.BAD, 1, 1, 1, 0.2 + 0.4 * blink);
       }
       // elektrárna bez paliva bliká oranžově
-      if (EG.FUEL[b.kind] && b.fuel <= 0) {
+      if (EG.fuelDefOf(b) && b.fuel <= 0 && !b.mothball) {
         renderer.pushSprite(b.x, b.y, S.BAD, 1, 0.75, 0.1, 0.25 + 0.45 * blink);
       }
     }

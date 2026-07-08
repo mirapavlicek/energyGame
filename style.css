@@ -47,6 +47,8 @@ html, body {
   padding: 8px;
   backdrop-filter: blur(4px);
   max-width: 210px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
 }
 .tool {
   display: flex; align-items: center; gap: 8px;
