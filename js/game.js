@@ -13,6 +13,7 @@
   let lineLevel = 110;         // zvolená napěťová úroveň vedení
   let lineCable = false;       // stavět jako podzemní kabel (2,5× cena)
   let selected = null;         // budova otevřená v panelu správy
+  let selectedLine = null;     // vedení otevřené v panelu správy
   let hoverF = [0, 0];         // přesná pozice kurzoru v dlaždicích (trefa na vedení)
 
   /* barvy vedení podle napěťové úrovně */
@@ -49,8 +50,11 @@
   }
 
   function init() {
-    const seedStr = new URLSearchParams(location.search).get('seed');
-    const seed = seedStr ? (parseInt(seedStr, 10) || 1) : ((Math.random() * 1e9) | 0);
+    const urlParams = new URLSearchParams(location.search);
+    const seedStr = urlParams.get('seed');
+    const scPre = SCENARIOS[urlParams.get('scenario')];
+    const seed = scPre ? scPre.seed
+      : seedStr ? (parseInt(seedStr, 10) || 1) : ((Math.random() * 1e9) | 0);
     map = EG.generateMap(MAP_SIZE, seed);
     sim = new EG.Sim(map);
     const canvas = $('#game');
@@ -97,6 +101,33 @@
       location.search = '?seed=' + s;
     });
 
+    // seznam objektů
+    $('#btn-objlist').addEventListener('click', () => {
+      const el = $('#objlist');
+      el.hidden = !el.hidden;
+      if (!el.hidden) refreshObjList();
+    });
+    $('#objlist-close').addEventListener('click', () => { $('#objlist').hidden = true; });
+    $('#objlist-filter').addEventListener('change', refreshObjList);
+    $('#objlist-rows').addEventListener('click', (e) => {
+      const row = e.target.closest('.obj-row');
+      if (!row) return;
+      const [wx, wy] = renderer.tileToWorld(+row.dataset.x, +row.dataset.y);
+      renderer.cam.x = wx; renderer.cam.y = wy;
+      const b = sim.buildings.find((o) => o.id === +row.dataset.id);
+      if (b) selectBuilding(b);
+    });
+
+    // scénář přes URL (?scenario=1..3)
+    const scParam = new URLSearchParams(location.search).get('scenario');
+    if (scParam && SCENARIOS[scParam]) {
+      scenario = SCENARIOS[scParam];
+      scenario.id = scParam;
+      sim.money = scenario.money;
+      sim.msg('🎯 SCÉNÁŘ „' + scenario.name + '": ' + scenario.desc);
+      $('#seed-label').title = 'Scénář: ' + scenario.desc;
+    }
+
     // režimy obtížnosti přes URL (?mode=sandbox|expert)
     const mode = new URLSearchParams(location.search).get('mode');
     if (mode === 'sandbox') { sim.money = 1e9; sim.msg('Režim SANDBOX: neomezené peníze.'); }
@@ -132,6 +163,82 @@
     EG.game = { get sim() { return sim; }, get map() { return map; }, get renderer() { return renderer; } };
 
     requestAnimationFrame(loop);
+  }
+
+  /* ---------- scénáře s cíli ---------- */
+  const SCENARIOS = {
+    1: {
+      seed: 101, money: 1200, sustain: 120, name: 'Elektrifikace',
+      desc: 'Napájej aspoň 8 měst na 90 %+ nepřetržitě celý den.',
+      check: (s) => (s.cityAssign || []).filter((ca) => ca.sub >= 0 && (ca.city.powered || 0) > 0.9).length >= 8,
+    },
+    2: {
+      seed: 202, money: 900, sustain: 0, name: 'Zbohatni',
+      desc: 'Vydělej 30 000 € a nedluž ani euro.',
+      check: (s) => s.money >= 30000 && !(s.debt > 0),
+    },
+    3: {
+      seed: 303, money: 2500, sustain: 120, name: 'Zelená síť',
+      desc: 'Dodávej přes 30 MW celý den bez uhlí a plynu.',
+      check: (s) => (s.stats && s.stats.delivered > 30) &&
+        !s.buildings.some((b) => (b.kind === 'coal' || b.kind === 'gas') && b.out > 0.5),
+    },
+  };
+  let scenario = null;
+  let scenarioT = 0;
+  let scenarioWon = false;
+
+  function checkScenario() {
+    if (!scenario || scenarioWon || sim.gameOver) return;
+    if (scenario.check(sim)) {
+      scenarioT += 1;
+      if (scenarioT >= scenario.sustain) {
+        scenarioWon = true;
+        $('#victory-text').textContent = scenario.name + ': ' + scenario.desc +
+          ' Skóre ' + Math.floor(sim.score).toLocaleString('cs-CZ') + '.';
+        $('#victory').hidden = false;
+        sim.msg('🏆 SCÉNÁŘ „' + scenario.name + '" SPLNĚN!');
+        award('scenario' + scenario.id, 'Scénář: ' + scenario.name);
+      }
+    } else {
+      scenarioT = 0;
+    }
+  }
+
+  /* ---------- seznam objektů ---------- */
+  function kindGroup(k) {
+    if (k === 'sub') return 'sub';
+    if (EG.STORAGE[k]) return 'stor';
+    if (k === 'xborder') return 'x';
+    return 'gen';
+  }
+
+  function refreshObjList() {
+    const filter = $('#objlist-filter').value;
+    const rows = [];
+    for (const b of sim.buildings) {
+      const grp = kindGroup(b.kind);
+      const problem = b.broken || (EG.fuelDefOf(b) && b.fuel <= 0) || (b.cond !== undefined && b.cond < 0.3);
+      if (filter === 'gen' && grp !== 'gen') continue;
+      if (filter === 'sub' && grp !== 'sub') continue;
+      if (filter === 'stor' && grp !== 'stor') continue;
+      if (filter === 'bad' && !problem) continue;
+      let state;
+      if (b.broken) state = '<span class="bad">porucha</span>';
+      else if (b.mothball) state = '<span class="dim">konzerv.</span>';
+      else if (EG.fuelDefOf(b) && b.fuel <= 0) state = '<span class="bad">bez paliva</span>';
+      else if (b.cond !== undefined && b.cond < 0.3) state = '<span class="warn">zanedbaná</span>';
+      else state = '<span class="dim">ok</span>';
+      const perf = EG.STORAGE[b.kind]
+        ? Math.round(b.charge) + ' MWs'
+        : b.kind === 'sub' ? sim.fieldsUsed(b) + '/' + sim.fieldLimit(b) + ' polí'
+        : (b.out || 0).toFixed(0) + ' MW';
+      rows.push('<div class="obj-row" data-x="' + b.x + '" data-y="' + b.y + '" data-id="' + b.id + '">' +
+        '<span class="o-name">' + EG.BUILD[b.kind].name + ' [' + b.x + ',' + b.y + ']</span>' +
+        '<span>' + perf + '</span>' + state + '</div>');
+    }
+    $('#objlist-rows').innerHTML = rows.join('') ||
+      '<div class="dim" style="padding:6px">Nic tu není.</div>';
   }
 
   /* ---------- načtení uložené hry ---------- */
@@ -269,6 +376,45 @@
       renderer.cam.zoom = nz;
     }, { passive: false });
 
+    // dotykové ovládání: tažení = posun, pinch = zoom, ťuknutí = klik
+    let touchState = null;
+    canvas.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      if (e.touches.length === 1) {
+        const t = e.touches[0];
+        touchState = { mode: 'pan', x: t.clientX, y: t.clientY, sx: t.clientX, sy: t.clientY, moved: false };
+      } else if (e.touches.length === 2) {
+        const [a, b] = e.touches;
+        touchState = { mode: 'pinch', dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) };
+      }
+    }, { passive: false });
+    canvas.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (!touchState) return;
+      if (touchState.mode === 'pan' && e.touches.length === 1) {
+        const t = e.touches[0];
+        renderer.cam.x -= (t.clientX - touchState.x) / renderer.cam.zoom;
+        renderer.cam.y -= (t.clientY - touchState.y) / renderer.cam.zoom;
+        if (Math.abs(t.clientX - touchState.sx) + Math.abs(t.clientY - touchState.sy) > 8) touchState.moved = true;
+        touchState.x = t.clientX; touchState.y = t.clientY;
+      } else if (touchState.mode === 'pinch' && e.touches.length === 2) {
+        const [a, b] = e.touches;
+        const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        renderer.cam.zoom = Math.min(3.2, Math.max(0.18, renderer.cam.zoom * (d / touchState.dist)));
+        touchState.dist = d;
+      }
+    }, { passive: false });
+    canvas.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      if (touchState && touchState.mode === 'pan' && !touchState.moved) {
+        const rect = canvas.getBoundingClientRect();
+        hoverF = renderer.screenToTileF(touchState.sx - rect.left, touchState.sy - rect.top);
+        hover = [Math.round(hoverF[0]), Math.round(hoverF[1])];
+        click();
+      }
+      if (e.touches.length === 0) touchState = null;
+    }, { passive: false });
+
     window.addEventListener('keydown', (e) => {
       const k = e.key.toLowerCase();
       if (k === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undoLast(); return; }
@@ -303,7 +449,10 @@
     const [gx, gy] = hover;
     if (tool === 'pan') {
       const b = sim.buildingAt(gx, gy);
-      if (b) selectBuilding(b); else closePanel();
+      if (b) { selectBuilding(b); return; }
+      const l = lineNear(hoverF[0], hoverF[1]);
+      if (l) { selectLine(l); return; }
+      closePanel();
       return;
     }
     if (tool === 'demolish') {
@@ -635,6 +784,15 @@
   /* ---------- panel správy budovy ---------- */
   function selectBuilding(b) {
     selected = b;
+    selectedLine = null;
+    $('#bpanel').hidden = false;
+    buildPanelActions();
+    updatePanel();
+  }
+
+  function selectLine(l) {
+    selectedLine = l;
+    selected = null;
     $('#bpanel').hidden = false;
     buildPanelActions();
     updatePanel();
@@ -642,6 +800,7 @@
 
   function closePanel() {
     selected = null;
+    selectedLine = null;
     $('#bpanel').hidden = true;
   }
 
@@ -659,6 +818,20 @@
     const b = selected;
     const box = $('#bp-actions');
     box.innerHTML = '';
+
+    // panel vedení: servis a odpojení
+    if (selectedLine) {
+      const l = selectedLine;
+      const svc = bpButton('🔧 Servis vedení <span class="cost" id="bp-lsvc-cost"></span>', l.broken ? 'danger' : '',
+        () => sim.serviceLine(l));
+      svc.id = 'bp-btn-lsvc';
+      svc.title = 'Výměna izolátorů a vodičů: stav zpět na 100 %. Vedení kryje i servisní smlouva rozvodny na konci trasy.';
+      bpButton('🗑 Odpojit systém / odstranit', 'danger', () => {
+        sim.removeLine(l);
+        if (!sim.lines.includes(l)) closePanel();
+      });
+      return;
+    }
     if (!b) return;
 
     // přeshraniční bod: jen sjednávání smluv (nákup/prodej po 10 MW)
@@ -795,6 +968,37 @@
   }
 
   function updatePanel() {
+    // panel vedení
+    if (selectedLine) {
+      const l = selectedLine;
+      if (!sim.lines.includes(l)) { closePanel(); return; }
+      const LT = EG.LINE_TYPES[l.level];
+      $('#bp-title').textContent = 'Vedení ' + LT.name + (l.n > 1 ? ' ' + l.n + '×' : '') + (l.cable ? ' (kabel)' : '');
+      $('#bp-cond-row').hidden = false;
+      let rows = 'Délka: <span class="val">' + l.len.toFixed(1) + ' dlaždic</span><br>';
+      rows += 'Tok: <span class="val">' + Math.abs(l.flow).toFixed(1) + ' MW</span> · zatížení <span class="val">' +
+        Math.round(l.load * 100) + ' %</span><br>';
+      rows += 'Kapacita: <span class="val">' + Math.round(l.effCap || l.cap) + ' / ' + l.cap + ' MW</span>';
+      if ((l.effCap || l.cap) < l.cap) rows += ' <span class="dim">(penalizace: stáří/jalový výkon/počasí)</span>';
+      rows += '<br>';
+      if (l.broken) rows += '<span class="bad">⚠ PORUCHA – zestárlé vedení čeká na servis!</span><br>';
+      if (l.trippedUntil && l.trippedUntil > sim.time) rows += '<span class="bad">⛈ odpojeno bouřkou</span><br>';
+      if (sim._lineUnderContract(l)) rows += 'Údržba: <span class="val">smlouva rozvodny ✓</span><br>';
+      $('#bp-stats').innerHTML = rows;
+      const pct = Math.round((l.cond === undefined ? 1 : l.cond) * 100);
+      $('#bp-cond-pct').textContent = pct + ' %';
+      const fill = $('#bp-cond-fill');
+      fill.style.width = pct + '%';
+      fill.style.background = l.broken ? '#ff5340' : pct > 60 ? '#5dbb63' : pct > 30 ? '#e8c84a' : '#ff8c40';
+      $('#bp-schema').hidden = true;
+      const lsBtn = $('#bp-btn-lsvc');
+      if (lsBtn) {
+        const c = sim.lineServiceCost(l);
+        $('#bp-lsvc-cost').textContent = '−' + c;
+        lsBtn.disabled = (!l.broken && (l.cond === undefined || l.cond > 0.97)) || sim.money < c;
+      }
+      return;
+    }
     const b = selected;
     if (!b) return;
     // budova mohla mezitím zaniknout
@@ -1151,6 +1355,12 @@
         const bl2 = (Math.sin(performance.now() * 0.012) + 1) / 2;
         r = 0.6 + 0.4 * bl2; g = 0.6 + 0.4 * bl2; bl = 0.9;
       }
+      if (l.broken || (l.trippedUntil && l.trippedUntil > sim.time)) {
+        // odpojené vedení: tmavé s blikáním
+        const bl3 = (Math.sin(performance.now() * 0.008) + 1) / 2;
+        r = 0.35 + 0.3 * bl3; g = 0.12; bl = 0.1;
+      }
+      if (l === selectedLine) { r = Math.min(1, r + 0.4); g = Math.min(1, g + 0.4); bl = Math.min(1, bl + 0.3); }
       const alpha = l.cable ? 0.55 : 0.95; // kabel je nenápadný (vede pod zemí)
       const n = l.n || 1;
       const dl = Math.hypot(b.x - a.x, b.y - a.y) || 1;
@@ -1204,7 +1414,16 @@
         tintR *= 0.9 + 0.1 * f; tintG *= f; tintB *= f * 0.95;
       }
       if (b && b.broken) { tintR = 1; tintG = 0.35; tintB = 0.3; } // porucha
-      renderer.pushSprite(x, y, sId, tintR, tintG, tintB, 1);
+      // výstavba: nová budova se první ~3 s „staví" (průhledná a šedá)
+      let alpha = 1;
+      if (b && b.builtAt !== undefined) {
+        const age = sim.time - b.builtAt;
+        if (age < 3) {
+          alpha = 0.35 + 0.65 * (age / 3);
+          tintR *= 0.8; tintG *= 0.8; tintB *= 0.8;
+        }
+      }
+      renderer.pushSprite(x, y, sId, tintR, tintG, tintB, alpha);
 
       // hvězdy modernizace nad budovou (úroveň 2 = ★, úroveň 3 = ★★)
       if (b && b.level > 1) {
@@ -1328,13 +1547,15 @@
       history.push({ p: st.produced || 0, d: st.delivered || 0, l: st.losses || 0, s: sim.spotK || 1 });
       if (history.length > 240) history.shift();
       checkAchievements();
+      checkScenario();
+      if (!$('#objlist').hidden) refreshObjList();
     }
     pushScene();
     renderer.render(t / 1000);
     drawMinimap();
     updateHUD();
     if (chartOn) drawChart();
-    if (selected) updatePanel();
+    if (selected || selectedLine) updatePanel();
     requestAnimationFrame(loop);
   }
 

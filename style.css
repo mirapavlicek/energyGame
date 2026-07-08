@@ -33,6 +33,44 @@ html, body {
 }
 #chart[hidden] { display: none; }
 
+/* seznam objektů */
+#objlist {
+  position: absolute; left: 50%; top: 54px; transform: translateX(-50%);
+  width: 460px; max-height: 60vh;
+  background: rgba(10, 14, 19, 0.94);
+  border: 1px solid #3c4c5c; border-radius: 10px;
+  padding: 8px 10px; z-index: 8;
+  display: flex; flex-direction: column;
+}
+#objlist[hidden] { display: none; }
+#objlist-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+#objlist-head b { flex: 1; }
+#objlist-head select {
+  background: #2b3a4a; color: #e8edf2; border: 1px solid #45596e;
+  border-radius: 5px; font-size: 12px; padding: 2px 4px;
+}
+#objlist-close { background: none; border: none; color: #8b98a5; font-size: 17px; cursor: pointer; }
+#objlist-rows { overflow-y: auto; font-size: 12px; }
+.obj-row {
+  display: flex; gap: 8px; padding: 3px 6px; border-radius: 5px; cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.obj-row:hover { background: rgba(255,255,255,0.08); }
+.obj-row .o-name { flex: 1; }
+.obj-row .bad { color: #ff6a5a; }
+.obj-row .warn { color: #f0c040; }
+.obj-row .dim { color: #8b98a5; }
+
+/* výhra scénáře */
+#victory {
+  position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%);
+  background: rgba(8, 20, 10, 0.95); border: 2px solid #2f7e3b; border-radius: 12px;
+  padding: 26px 40px; text-align: center; z-index: 20;
+}
+#victory div { font-size: 28px; font-weight: 800; color: #7ed087; margin-bottom: 8px; }
+#victory p { color: #cdd6de; font-size: 13px; }
+#victory[hidden] { display: none; }
+
 /* konec hry */
 #gameover {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%);

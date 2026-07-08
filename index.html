@@ -27,6 +27,7 @@
       <button id="btn-loan" class="hud-btn" title="Vzít úvěr +2000 € (úrok 10 %/rok)">💳 +2000</button>
       <button id="btn-repay" class="hud-btn" title="Splatit 500 € z úvěru">Splatit</button>
       <button id="btn-n1" class="hud-btn" title="N-1 analýza: přežije síť výpadek libovolného jednoho vedení?">N-1</button>
+      <button id="btn-objlist" class="hud-btn" title="Seznam objektů (elektrárny, rozvodny, zásobníky)">📋</button>
       <button id="btn-layer" class="hud-btn" title="Mapové vrstvy: dosahy rozvoden / zatížení vedení">🗺</button>
       <button id="btn-chart" class="hud-btn" title="Grafy výroby a spotřeby">📈</button>
       <button id="btn-save" class="hud-btn" title="Uložit hru (localStorage)">💾</button>
@@ -45,6 +46,26 @@
   <div id="hover-info"></div>
   <div id="log"></div>
   <canvas id="minimap" title="Klikni pro přesun kamery"></canvas>
+
+  <div id="objlist" hidden>
+    <div id="objlist-head">
+      <b>Objekty</b>
+      <select id="objlist-filter">
+        <option value="all">vše</option>
+        <option value="gen">elektrárny</option>
+        <option value="sub">rozvodny</option>
+        <option value="stor">zásobníky</option>
+        <option value="bad">problémové</option>
+      </select>
+      <button id="objlist-close">×</button>
+    </div>
+    <div id="objlist-rows"></div>
+  </div>
+
+  <div id="victory" hidden>
+    <div>🏆 SCÉNÁŘ SPLNĚN</div>
+    <p id="victory-text"></p>
+  </div>
 
   <div id="gameover" hidden>
     <div>💀 BANKROT</div>
