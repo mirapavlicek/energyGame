@@ -15,6 +15,20 @@ html, body {
 }
 #game:active { cursor: grabbing; }
 
+/* tónování scény: noc a počasí (řídí updateHUD) */
+#scene-overlay {
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: #0a1428;
+  opacity: 0;
+  transition: opacity 1s;
+}
+
+/* fotorežim (klávesa P): schová celé UI */
+body.photo #hud, body.photo #toolbar, body.photo #linebar, body.photo #help,
+body.photo #btn-help, body.photo #minimap, body.photo #log, body.photo #hover-info,
+body.photo #bpanel { display: none !important; }
+
 /* ---------- horní HUD ---------- */
 #hud {
   position: absolute; top: 0; left: 0; right: 0;

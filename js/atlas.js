@@ -14,7 +14,7 @@
     HOUSE: 8, HOUSE2: 9, CENTER: 10, HYDRO: 11, DAM: 12, COAL: 13, SOLAR: 14, WIND: 15,
     SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22, XBORDER: 23,
     STAR: 24, PIP: 25, NUKE: 26, GASP: 27, GEOTH: 28, BIOG: 29, WASTE: 30, OWIND: 31,
-    H2: 32, GEOFIELD: 33,
+    H2: 32, GEOFIELD: 33, WIND2: 34, OWIND2: 35,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -430,6 +430,34 @@
       c.beginPath(); c.arc(AX + 2, AY - 13, 3.6, 0, Math.PI * 2); c.fill();
       c.beginPath(); c.arc(AX + 7, AY - 19, 4.2, 0, Math.PI * 2); c.fill();
     });
+
+    // druhé snímky rotorů (pootočené lopatky) – animace větrníků
+    const windFrame = (c, baseTile, phase, hubY) => {
+      baseTile(c);
+      c.fillStyle = '#dfe4e8';
+      for (let b = 0; b < 3; b++) {
+        const a = b * (Math.PI * 2 / 3) + phase;
+        c.beginPath();
+        c.moveTo(AX, hubY);
+        c.lineTo(AX + Math.cos(a) * 17 - Math.sin(a) * 2, hubY + Math.sin(a) * 17 + Math.cos(a) * 2);
+        c.lineTo(AX + Math.cos(a) * 17 + Math.sin(a) * 2, hubY + Math.sin(a) * 17 - Math.cos(a) * 2);
+        c.closePath(); c.fill();
+      }
+      c.fillStyle = '#c74a3c';
+      c.beginPath(); c.arc(AX, hubY, 2.5, 0, Math.PI * 2); c.fill();
+    };
+    at(S.WIND2, (c) => windFrame(c, (g) => {
+      tile(g, '#9db374', '#b1c489', '#7f945c');
+      g.strokeStyle = '#e8ecef'; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(AX, AY - 2); g.lineTo(AX, AY - 46); g.stroke();
+    }, 1.55, AY - 46));
+    at(S.OWIND2, (c) => windFrame(c, (g) => {
+      tile(g, '#2e6fa8', '#4b8fc4', '#22557f');
+      g.fillStyle = '#d8b25f';
+      g.beginPath(); g.ellipse(AX, AY - 1, 7, 3, 0, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = '#e8ecef'; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(AX, AY - 2); g.lineTo(AX, AY - 44); g.stroke();
+    }, 2.15, AY - 44));
 
     at(S.SEL, (c) => {
       diamond(c, AX, AY, HW - 1, HH - 0.5);
