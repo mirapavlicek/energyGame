@@ -163,6 +163,16 @@ a spravovat v panelu:
 | klik na budovu | panel správy (servis, smlouva, modernizace, trafa…) |
 | `7` opakovaně | přepínání napěťové úrovně vedení |
 | napsat `funds` | cheat: +1 000 € |
+| `Ctrl+Z` | vrátit poslední stavbu/vedení (plná vratka) |
+| `P` | fotorežim (schová UI) |
+| klik na hlášku v logu | skok kamerou na místo (`[x,y]`) |
+
+HUD navíc nabízí: 🗺 mapové vrstvy (dosahy rozvoden / zatížení vedení),
+📈 grafy výroby, dodávky, ztrát a spotové ceny, 💾/📂 uložení a načtení hry,
+💳 úvěr a splátky, N-1 analýzu, 🗓 výzvu dne (společný seed z data) a rekord
+na seed. Achievementy se hlásí v logu. Režimy: `?mode=sandbox` (neomezené
+peníze) a `?mode=expert` (méně peněz, rychlejší opotřebení, dvojité sankce);
+při −2 000 € přijde bankrot a konec hry.
 | `1`–`6` | stavby (vodní, přehrada, uhelná, solár, vítr, rozvodna) |
 | `7` | vedení – klikej z budovy na budovu (řetězí se) |
 | `Q` / `Esc` | režim prohlížení |

@@ -31,6 +31,11 @@
   let speed = 1;
   let lastMsgCount = 0;
   let cheatBuf = '';           // buffer pro psané cheaty (funds)
+  let mapLayer = 0;            // mapové vrstvy: 0 nic, 1 dosahy rozvoden, 2 zatížení vedení
+  let chartOn = false;         // panel grafů
+  const history = [];          // vzorky pro grafy (výroba/spotřeba/ztráty/spot)
+  let lastSample = 0;
+  const undoStack = [];        // undo posledních staveb (Ctrl+Z)
 
   const $ = (s) => document.querySelector(s);
 
@@ -69,6 +74,42 @@
     $('#btn-loan').addEventListener('click', () => sim.takeLoan(2000));
     $('#btn-repay').addEventListener('click', () => sim.repayLoan(500));
 
+    // mapové vrstvy, grafy, uložení/načtení, výzva dne
+    $('#btn-layer').addEventListener('click', () => {
+      mapLayer = (mapLayer + 1) % 3;
+      sim.msg('Vrstva: ' + ['žádná', 'dosahy rozvoden', 'zatížení vedení'][mapLayer]);
+      $('#btn-layer').classList.toggle('active', mapLayer > 0);
+    });
+    $('#btn-chart').addEventListener('click', () => {
+      chartOn = !chartOn;
+      $('#chart').hidden = !chartOn;
+    });
+    $('#btn-save').addEventListener('click', () => {
+      try {
+        localStorage.setItem('eg_save', EG.serialize(sim));
+        sim.msg('💾 Hra uložena');
+      } catch (e) { sim.msg('Uložení selhalo: ' + e.message, 'warn'); }
+    });
+    $('#btn-load').addEventListener('click', loadSave);
+    $('#btn-daily').addEventListener('click', () => {
+      const d = new Date();
+      const s = d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+      location.search = '?seed=' + s;
+    });
+
+    // režimy obtížnosti přes URL (?mode=sandbox|expert)
+    const mode = new URLSearchParams(location.search).get('mode');
+    if (mode === 'sandbox') { sim.money = 1e9; sim.msg('Režim SANDBOX: neomezené peníze.'); }
+    if (mode === 'expert') { sim.money = 500; sim.hardMode = true; sim.msg('Režim EXPERT: méně peněz, rychlejší opotřebení, dvojité sankce!', 'warn'); }
+
+    // klik na hlášku v logu skočí kamerou na místo ([x,y] v textu)
+    $('#log').addEventListener('click', (e) => {
+      const mch = (e.target.textContent || '').match(/\[(\d+),(\d+)\]/);
+      if (!mch) return;
+      const [wx, wy] = renderer.tileToWorld(+mch[1], +mch[2]);
+      renderer.cam.x = wx; renderer.cam.y = wy;
+    });
+
     setupInput(canvas);
     setupToolbar();
     setupLinebar();
@@ -91,6 +132,102 @@
     EG.game = { get sim() { return sim; }, get map() { return map; }, get renderer() { return renderer; } };
 
     requestAnimationFrame(loop);
+  }
+
+  /* ---------- načtení uložené hry ---------- */
+  function loadSave() {
+    const data = localStorage.getItem('eg_save');
+    if (!data) { sim.msg('Žádná uložená hra', 'warn'); return false; }
+    try {
+      sim = EG.restore(data);
+      map = sim.map;
+      EG.onTerrainChanged();
+      setupMinimap();
+      closePanel();
+      lineFrom = null;
+      sim.msg('📂 Hra načtena (den ' + (sim.day || 1) + ')');
+      return true;
+    } catch (e) {
+      sim.msg('Načtení selhalo: ' + e.message, 'warn');
+      return false;
+    }
+  }
+
+  /* ---------- rekordy a achievementy ---------- */
+  let achievements = {};
+  try { achievements = JSON.parse(localStorage.getItem('eg_ach') || '{}'); } catch (e) { /* ignoruj */ }
+  function award(key, label) {
+    if (achievements[key]) return;
+    achievements[key] = Date.now();
+    try { localStorage.setItem('eg_ach', JSON.stringify(achievements)); } catch (e) { /* ignoruj */ }
+    sim.msg('🏆 ACHIEVEMENT: ' + label);
+  }
+
+  function checkAchievements() {
+    const st = sim.stats || {};
+    if (sim.time > sim.dayLen * 12 && sim.blackouts === 0) award('year_ok', 'Rok bez blackoutu');
+    if ((st.exported || 0) >= 60) award('exporter', 'Exportní velmoc (60+ MW za hranice)');
+    if ((st.delivered || 0) > 30) {
+      const fossil = sim.buildings.some((b) => (b.kind === 'coal' || b.kind === 'gas') && b.out > 0.5);
+      if (!fossil) award('green', '100 % bez fosilní výroby při zátěži');
+    }
+    const inds = sim.indAssign || [];
+    if (inds.length >= 5 && inds.every((ia) => (ia.ind.powered || 0) > 0.95)) award('industry', 'Celý průmysl běží');
+    if ((sim.debt || 0) === 0 && sim.money > 20000) award('rich', 'Kapitál 20 000 € bez dluhů');
+  }
+
+  function updateRecord() {
+    const key = 'eg_best_' + map.seed;
+    let best = 0;
+    try { best = +(localStorage.getItem(key) || 0); } catch (e) { /* ignoruj */ }
+    if (sim.score > best) {
+      best = Math.floor(sim.score);
+      try { localStorage.setItem(key, best); } catch (e) { /* ignoruj */ }
+    }
+    return best;
+  }
+
+  /* ---------- grafy ---------- */
+  function drawChart() {
+    const cv = $('#chart');
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, cv.width, cv.height);
+    if (history.length < 2) return;
+    const W = cv.width, H = cv.height;
+    let maxV = 10;
+    for (const s of history) maxV = Math.max(maxV, s.p, s.d);
+    const series = [
+      { k: 'p', col: '#7ed087', label: 'výroba' },
+      { k: 'd', col: '#e8c84a', label: 'dodávka' },
+      { k: 'l', col: '#ff6a5a', label: 'ztráty' },
+    ];
+    for (const s of series) {
+      g.strokeStyle = s.col; g.lineWidth = 1.5;
+      g.beginPath();
+      history.forEach((pt, i) => {
+        const x = i / (history.length - 1) * (W - 10) + 5;
+        const y = H - 18 - (pt[s.k] / maxV) * (H - 30);
+        if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+      });
+      g.stroke();
+    }
+    // spot cena (pravá osa 0–2×)
+    g.strokeStyle = '#7ec8ff'; g.lineWidth = 1; g.setLineDash([3, 3]);
+    g.beginPath();
+    history.forEach((pt, i) => {
+      const x = i / (history.length - 1) * (W - 10) + 5;
+      const y = H - 18 - (pt.s / 2) * (H - 30);
+      if (i === 0) g.moveTo(x, y); else g.lineTo(x, y);
+    });
+    g.stroke(); g.setLineDash([]);
+    g.font = '10px sans-serif';
+    let lx = 8;
+    for (const s of series.concat([{ col: '#7ec8ff', label: 'spot' }])) {
+      g.fillStyle = s.col; g.fillText(s.label, lx, H - 5);
+      lx += 52;
+    }
+    g.fillStyle = '#8b98a5';
+    g.fillText(Math.round(maxV) + ' MW', W - 46, 12);
   }
 
   /* ---------- vstup ---------- */
@@ -134,6 +271,7 @@
 
     window.addEventListener('keydown', (e) => {
       const k = e.key.toLowerCase();
+      if (k === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undoLast(); return; }
       // cheat: napiš „funds" a dostaneš 1 000 €
       if (k.length === 1) {
         cheatBuf = (cheatBuf + k).slice(-16);
@@ -186,14 +324,42 @@
         return;
       }
       if (!lineFrom) { lineFrom = b; sim.msg('Vyber cílovou stavbu (' + EG.LINE_TYPES[lineLevel].name + ')'); return; }
-      sim.connect(lineFrom, b, lineLevel, lineCable);
+      const mL = sim.money;
+      const l = sim.connect(lineFrom, b, lineLevel, lineCable);
+      if (l) undoStack.push({ t: 'line', id: l.id, cost: mL - sim.money, wasN: l.n });
       lineFrom = b; // řetězení vedení
       return;
     }
     // stavba budovy
+    const mB = sim.money;
     const b = sim.place(tool, gx, gy);
-    if (b && tool !== 'sub') {
-      // pohodlí: po postavení elektrárny rovnou nabídnout vedení
+    if (b) undoStack.push({ t: 'b', id: b.id, cost: mB - sim.money });
+    if (undoStack.length > 30) undoStack.shift();
+  }
+
+  /* undo poslední stavby (Ctrl+Z) – plná vratka */
+  function undoLast() {
+    const a = undoStack.pop();
+    if (!a) { sim.msg('Není co vracet', 'warn'); return; }
+    if (a.t === 'b') {
+      const b = sim.buildings.find((o) => o.id === a.id);
+      if (!b) { sim.msg('Stavba už neexistuje', 'warn'); return; }
+      if (b === selected) closePanel();
+      sim.buildings = sim.buildings.filter((o) => o !== b);
+      sim.lines = sim.lines.filter((l) => l.a !== b.id && l.b !== b.id);
+      sim.money += a.cost;
+      sim.msg('↩ Stavba vrácena (+' + a.cost + ')');
+    } else {
+      const l = sim.lines.find((o) => o.id === a.id);
+      if (!l) { sim.msg('Vedení už neexistuje', 'warn'); return; }
+      if (l.n > 1 && l.n === a.wasN) {
+        l.n--;
+        l.cap = EG.LINE_TYPES[l.level].cap * l.n;
+      } else {
+        sim.lines = sim.lines.filter((o) => o !== l);
+      }
+      sim.money += a.cost;
+      sim.msg('↩ Vedení vráceno (+' + a.cost + ')');
     }
   }
 
@@ -562,6 +728,11 @@
           () => sim.buyCompensator(b));
         comp.title = 'Kondenzátorová baterie: dlouhá střídavá vedení z této rozvodny neztrácí 20 % kapacity.';
       }
+
+      // makro: celá kaskáda 110 -> NN jedním kliknutím
+      const kask = bpButton('⚡ Kaskáda 110→NN <span class="cost">−180</span>', '',
+        () => { sim.buyTrafo(b, 't110_22'); sim.buyTrafo(b, 't22_04'); });
+      kask.title = 'Koupí najednou trafo 110⇄22 kV a distribuční 22⇄0,4 kV.';
 
       // --- trafa: instalovaná + nákup + regulace (přepínač odboček) ---
       const sec = document.createElement('div');
@@ -936,6 +1107,8 @@
     $('#scene-overlay').style.opacity = Math.min(0.5, night + stormy).toFixed(2);
     $('#income').textContent = (st.income >= 0 ? '+' : '') + (st.income * 60).toFixed(1) + '/min';
     $('#score').textContent = Math.floor(sim.score).toLocaleString('cs-CZ');
+    const best = updateRecord();
+    $('#seed-label').textContent = 'seed ' + map.seed + (best > 0 ? ' · rekord ' + best.toLocaleString('cs-CZ') : '');
     const ph = sim.dayPhase || 0;
     const hours = Math.floor(6 + ph * 24) % 24;
     const seasonIco = { 'jaro': '🌱', 'léto': '☀️', 'podzim': '🍂', 'zima': '❄️' }[sim.seasonName] || '';
@@ -965,8 +1138,13 @@
       if (!a || !b) continue;
       const lc = LEVEL_COLOR[l.level] || [0.25, 0.25, 0.28];
       let r = lc[0] * 0.45, g = lc[1] * 0.45, bl = lc[2] * 0.45;
+      if (mapLayer === 2) {
+        // vrstva zatížení: zelená -> žlutá -> červená
+        const t = Math.min(1, l.load);
+        r = 0.15 + 0.8 * t; g = 0.8 - 0.6 * Math.max(0, t - 0.5) * 2; bl = 0.15;
+      }
       if (l.load > 1) { r = 0.95; g = 0.2; bl = 0.15; }
-      else if (l.load > 0.75) { r = 0.95; g = 0.6; bl = 0.1; }
+      else if (l.load > 0.75 && mapLayer !== 2) { r = 0.95; g = 0.6; bl = 0.1; }
       const dir = l.flow > 0.5 ? 1 : (l.flow < -0.5 ? -1 : 0);
       // N-1 analýza: kritická vedení blikají bíle
       if (sim._n1Critical && sim._n1Until > sim.time && sim._n1Critical.has(l.id)) {
@@ -1065,6 +1243,18 @@
       }
     }
 
+    // vrstva dosahů: kruhy všech rozvoden
+    if (mapLayer === 1) {
+      for (const b of sim.buildings) {
+        if (b.kind !== 'sub') continue;
+        const R = sim.subRange(b);
+        for (let k = 0; k < 20; k++) {
+          const a2 = k / 20 * Math.PI * 2;
+          renderer.pushSprite(b.x + Math.cos(a2) * R, b.y + Math.sin(a2) * R, S.CITYRING, 1, 1, 1, 0.35);
+        }
+      }
+    }
+
     // dosah rozvodny při stavbě
     if (tool === 'sub') {
       const R = EG.SUB_RANGE;
@@ -1130,11 +1320,20 @@
   function loop(t) {
     const dt = Math.min(0.1, (t - lastT) / 1000 || 0.016);
     lastT = t;
-    if (speed > 0) sim.tick(dt * speed);
+    if (speed > 0 && !sim.gameOver) sim.tick(dt * speed);
+    // vzorky pro grafy (1× za herní sekundu)
+    if (sim.time - lastSample >= 1) {
+      lastSample = sim.time;
+      const st = sim.stats || {};
+      history.push({ p: st.produced || 0, d: st.delivered || 0, l: st.losses || 0, s: sim.spotK || 1 });
+      if (history.length > 240) history.shift();
+      checkAchievements();
+    }
     pushScene();
     renderer.render(t / 1000);
     drawMinimap();
     updateHUD();
+    if (chartOn) drawChart();
     if (selected) updatePanel();
     requestAnimationFrame(loop);
   }
