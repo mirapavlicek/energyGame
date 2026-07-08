@@ -67,6 +67,16 @@
     setupLinebar();
     setupMinimap();
     $('#bp-close').addEventListener('click', closePanel);
+
+    // schovávací manuál (volba se pamatuje)
+    const setHelp = (show) => {
+      $('#help').hidden = !show;
+      $('#btn-help').hidden = show;
+      try { localStorage.setItem('eg_help', show ? '1' : '0'); } catch (e) { /* soukromý režim */ }
+    };
+    $('#help-close').addEventListener('click', () => setHelp(false));
+    $('#btn-help').addEventListener('click', () => setHelp(true));
+    try { if (localStorage.getItem('eg_help') === '0') setHelp(false); } catch (e) { /* ignoruj */ }
     sim.msg('Vítej! Postav elektrárnu, u města rozvodnu a kup do ní trafa (klik na rozvodnu).');
     sim.msg('Pak vše spoj vedením správného napětí – vodní elektrárna vyrábí na 110 kV.');
 

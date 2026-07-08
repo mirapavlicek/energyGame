@@ -676,6 +676,18 @@
       daylight: 12 + 4.5 * cosAt(0.375), // délka dne v hodinách: léto 16,5 · zima 7,5
     };
 
+    // suché a mokré roky: každý rok má vlastní hydrologii (0,75–1,25×)
+    const yearIdx = Math.floor(this.time / yearLen);
+    if (this._hydroYearIdx !== yearIdx) {
+      this._hydroYearIdx = yearIdx;
+      this._hydroYearFx = 0.75 + 0.5 * EG.rng.hash2(yearIdx * 13 + 7, 3, this.map.seed);
+      const f = this._hydroYearFx;
+      this.msg('Hydrologická předpověď na rok ' + (yearIdx + 1) + ': ' +
+        (f < 0.9 ? 'suchý rok' : f > 1.1 ? 'vodný rok' : 'průměrný rok') +
+        ' (průtoky ' + (f >= 1 ? '+' : '') + Math.round((f - 1) * 100) + ' %)');
+    }
+    this.seasonFx.hydro *= this._hydroYearFx;
+
     // slunce: půlvlna kolem 13:00, šířka podle sezónní délky dne
     const h = (6 + dayPhase * 24) % 24;
     const dh = Math.min(Math.abs(h - 13), 24 - Math.abs(h - 13));
