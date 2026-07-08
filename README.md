@@ -167,7 +167,14 @@ a spravovat v panelu:
 | `P` | fotorežim (schová UI) |
 | klik na hlášku v logu | skok kamerou na místo (`[x,y]`) |
 
-HUD navíc nabízí: 🗺 mapové vrstvy (dosahy rozvoden / zatížení vedení),
+**Vedení stárne** provozem (klik na linku v režimu prohlížení otevře jeho
+panel se stavem, servisem a odpojením; smlouva rozvodny na konci trasy ho
+udržuje). **Tepelné zdroje po odstávce chladnou** a najíždí pozvolna (plyn
+6 s, uhlí 30 s, jádro 90 s) – po blackoutu se hodí baterie nebo voda na
+nastartování. Scénáře s cíli: `?scenario=1` (Elektrifikace), `2` (Zbohatni),
+`3` (Zelená síť). Hra jde ovládat i dotykem (tažení, pinch zoom, ťuknutí).
+
+HUD navíc nabízí: 📋 seznam objektů s filtrem, 🗺 mapové vrstvy (dosahy rozvoden / zatížení vedení),
 📈 grafy výroby, dodávky, ztrát a spotové ceny, 💾/📂 uložení a načtení hry,
 💳 úvěr a splátky, N-1 analýzu, 🗓 výzvu dne (společný seed z data) a rekord
 na seed. Achievementy se hlásí v logu. Režimy: `?mode=sandbox` (neomezené

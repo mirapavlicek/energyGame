@@ -723,6 +723,144 @@ const server = http.createServer((req, res) => {
   if (sources.bioName !== 'štěpka' || sources.bioGen !== 70) throw new Error('retrofit na biomasu nefunguje: ' + sources.bioName + '/' + sources.bioGen);
   if (sources.maxLevel !== 5 || sources.multL5 !== 1.8) throw new Error('5 úrovní modernizace nefunguje');
 
+  // --- F: stárnutí vedení, studené starty, seznam objektů ---
+  const batchF = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const c = map.cities[0];
+    let sub = null;
+    for (let dy = -3; dy <= 3 && !sub; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+    }
+    sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    const line = sim.connect(coal, sub, 220);
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+
+    // stárnutí vedení pod zátěží
+    const condStart = line.cond;
+    for (let i = 0; i < 100; i++) sim.tick(1);
+    sim.buyFuel(coal); // ať mezitím nedošlo palivo
+    const condAged = line.cond;
+    const agesUnderLoad = condAged < condStart - 0.02;
+    // zestárlé vedení ztrácí kapacitu a může vypadnout
+    line.cond = 0.05;
+    line.broken = true;
+    sim.tick(0.1);
+    const cityDark = map.cities[0].powered;
+    const svcCost = sim.lineServiceCost(line);
+    sim.serviceLine(line);
+    const svcOk = line.cond === 1 && !line.broken;
+    for (let i = 0; i < 5; i++) sim.tick(0.1);
+    const cityBack = map.cities[0].powered;
+    // smlouva rozvodny kryje vedení
+    sim.setContract(sub, true);
+    line.cond = 0.6;
+    for (let i = 0; i < 50; i++) sim.tick(0.1);
+    const contractHeals = line.cond > 0.6;
+    sim.setContract(sub, false);
+
+    // studený start: nečinná uhelná chladne a najíždí pozvolna
+    const warmRunning = coal.warm;
+    line.broken = true; // odpoj -> uhelná stojí
+    for (let i = 0; i < 100; i++) sim.tick(1); // 100 s: 30 s grace + chladnutí
+    const warmCold = coal.warm;
+    line.broken = false; line.cond = 1;
+    sim.tick(0.1);
+    const outColdStart = coal.out; // hned po připojení jen zlomek
+    for (let i = 0; i < 60; i++) sim.tick(1);
+    sim.buyFuel(coal);
+    sim.tick(0.1);
+    const outWarmedUp = coal.out;
+    return {
+      condStart: +condStart.toFixed(3), condAged: +condAged.toFixed(3), agesUnderLoad,
+      cityDark: +cityDark.toFixed(2), cityBack: +cityBack.toFixed(2), svcOk, svcCost,
+      contractHeals,
+      warmRunning: +warmRunning.toFixed(2), warmCold: +warmCold.toFixed(2),
+      outColdStart: +outColdStart.toFixed(1), outWarmedUp: +outWarmedUp.toFixed(1),
+    };
+  });
+  console.log('dávka F:', JSON.stringify(batchF));
+  if (!batchF.agesUnderLoad) throw new Error('vedení nestárne provozem');
+  if (!(batchF.cityDark < 0.1) || !(batchF.cityBack > 0.9) || !batchF.svcOk) throw new Error('porucha/servis vedení nefunguje');
+  if (!batchF.contractHeals) throw new Error('smlouva rozvodny nekryje vedení');
+  if (!(batchF.warmRunning > 0.95) || !(batchF.warmCold < 0.5)) throw new Error('chladnutí zdroje nefunguje: ' + batchF.warmCold);
+  if (!(batchF.outColdStart < 30)) throw new Error('studený start neomezuje výkon: ' + batchF.outColdStart);
+  if (!(batchF.outWarmedUp > batchF.outColdStart * 3)) throw new Error('zdroj se nenajel zpátky: ' + batchF.outWarmedUp);
+
+  // --- F: panel vedení klikem v pan režimu + seznam objektů ---
+  await page.evaluate(() => {
+    const { sim, map, renderer } = EG.game;
+    sim.money = 100000;
+    let s1 = null, s2 = null;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (!sim.canPlace('sub', x, y).ok) continue;
+      if (!s1) { s1 = sim.place('sub', x, y); continue; }
+      const d = Math.hypot(x - s1.x, y - s1.y);
+      if (d >= 3 && d <= 4.5) { s2 = sim.place('sub', x, y); break outer; }
+    }
+    window.__lineTest = sim.connect(s1, s2, 0.4);
+    const [wx, wy] = renderer.tileToWorld((s1.x + s2.x) / 2, (s1.y + s2.y) / 2);
+    renderer.cam.x = wx; renderer.cam.y = wy; renderer.cam.zoom = 1.6;
+    document.querySelector('.tool[data-tool="pan"]').click();
+  });
+  await page.waitForTimeout(300);
+  const centerF = await page.evaluate(() => {
+    const cv = EG.game.renderer.canvas;
+    return { x: cv.clientWidth / 2, y: cv.clientHeight / 2 };
+  });
+  await page.mouse.click(centerF.x, centerF.y);
+  await page.waitForTimeout(250);
+  const linePanel = await page.evaluate(() => ({
+    title: document.querySelector('#bp-title').textContent,
+    visible: !document.querySelector('#bpanel').hidden,
+    svcBtn: !!document.querySelector('#bp-btn-lsvc'),
+  }));
+  console.log('panel vedení:', JSON.stringify(linePanel));
+  if (!linePanel.visible || !linePanel.title.startsWith('Vedení')) throw new Error('panel vedení se neotevřel: ' + linePanel.title);
+  if (!linePanel.svcBtn) throw new Error('panel vedení nemá servis');
+
+  const objList = await page.evaluate(() => {
+    document.querySelector('#btn-objlist').click();
+    const visible = !document.querySelector('#objlist').hidden;
+    const rows = document.querySelectorAll('#objlist-rows .obj-row').length;
+    const row = document.querySelector('#objlist-rows .obj-row');
+    if (row) row.click();
+    const panelOpened = !document.querySelector('#bpanel').hidden;
+    document.querySelector('#objlist-close').click();
+    return { visible, rows, panelOpened, closed: document.querySelector('#objlist').hidden };
+  });
+  console.log('seznam objektů:', JSON.stringify(objList));
+  if (!objList.visible || !(objList.rows > 3) || !objList.panelOpened || !objList.closed)
+    throw new Error('seznam objektů nefunguje: ' + JSON.stringify(objList));
+
+  // --- F: scénář s cílem (nová stránka ?scenario=2) ---
+  const page2 = await browser.newPage({ viewport: { width: 1100, height: 700 } });
+  await page2.goto('http://localhost:8901/?scenario=2');
+  await page2.waitForTimeout(1500);
+  const scInfo = await page2.evaluate(() => ({
+    seed: EG.game.map.seed,
+    money: Math.round(EG.game.sim.money),
+    goalMsg: EG.game.sim.messages.some((m) => m.text.includes('SCÉNÁŘ')),
+  }));
+  await page2.evaluate(() => { EG.game.sim.money = 30000; for (let i = 0; i < 3; i++) EG.game.sim.tick(1); });
+  let victory = false;
+  for (let k = 0; k < 8 && !victory; k++) {
+    await page2.waitForTimeout(700);
+    await page2.evaluate(() => { EG.game.sim.tick(1); });
+    victory = await page2.evaluate(() => !document.querySelector('#victory').hidden);
+  }
+  console.log('scénář:', JSON.stringify({ ...scInfo, victory }));
+  await page2.close();
+  if (scInfo.seed !== 202 || scInfo.money !== 30000 && scInfo.money !== 900) throw new Error('scénář nepřenastavil hru: ' + JSON.stringify(scInfo));
+  if (!scInfo.goalMsg) throw new Error('scénář nehlásí cíl');
+  if (!victory) throw new Error('splněný scénář nevyhlásil vítězství');
+
   // --- UI/meta E: save/load, vrstvy, grafy, undo, kaskáda, rekord, výzva ---
   const metaE = await page.evaluate(() => {
     const results = {};

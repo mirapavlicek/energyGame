@@ -317,6 +317,7 @@
     this.money -= cost;
     const b = {
       id: this.nextId++, kind, x, y, out: 0, gen: 0,
+      builtAt: this.time, // pro vizuální „výstavbu"
       level: 1,          // úroveň modernizace (násobí výkon)
       rangeLevel: 0,     // jen rozvodna: rozšíření dosahu
       cond: 1,           // technický stav 0..1
@@ -540,11 +541,34 @@
     this.money -= cost;
     const l = {
       id: this.nextId++, a: b1.id, b: b2.id, level, n: 1, cap: LT.cap,
-      cable: !!cable, flow: 0, load: 0, len: dist,
+      cable: !!cable, cond: 1, broken: false, flow: 0, load: 0, len: dist,
     };
     this.lines.push(l);
     this.msg(LT.name + (cable ? ' (podzemní kabel)' : '') + ' nataženo (−' + cost + ')');
     return l;
+  };
+
+  /* --- údržba vedení: stárne provozem, servis ho obnoví ---
+     Vedení kryje i servisní smlouva rozvodny na kterémkoli konci. */
+  Sim.prototype.lineServiceCost = function (l) {
+    return Math.ceil(6 + l.len * LINE_TYPES[l.level].cost * 0.35 * (1 - (l.cond === undefined ? 1 : l.cond)) +
+      (l.broken ? l.len * LINE_TYPES[l.level].cost * 0.2 : 0));
+  };
+
+  Sim.prototype.serviceLine = function (l) {
+    const cost = this.lineServiceCost(l);
+    if (this.money < cost) { this.msg('Nedostatek peněz na servis vedení', 'warn'); return false; }
+    this.money -= cost;
+    l.cond = 1;
+    l.broken = false;
+    this.msg('Servis vedení ' + LINE_TYPES[l.level].name + ' (−' + cost + ')');
+    return true;
+  };
+
+  Sim.prototype._lineUnderContract = function (l) {
+    const a = this.buildings.find((b) => b.id === l.a);
+    const b = this.buildings.find((b2) => b2.id === l.b);
+    return (a && a.kind === 'sub' && a.contract) || (b && b.kind === 'sub' && b.contract);
   };
 
   Sim.prototype.removeLine = function (line) {
@@ -753,10 +777,16 @@
     }
   };
 
-  /* skutečný výkon: základ × modernizace × technický stav (konzervovaná stojí) */
+  /* Tepelné zdroje najíždí pozvolně: po >30 s nečinnosti chladnou a
+     obnovení plného výkonu trvá (plyn rychle, jádro dlouho) – po totálním
+     blackoutu proto pomáhá baterie/přečerpávačka, která síť „nastartuje". */
+  const RAMP = { gas: 6, coal: 30, nuclear: 90 };
+
+  /* skutečný výkon: základ × modernizace × technický stav × najetí */
   Sim.prototype._genOf = function (b, sun, wind) {
     if (b.mothball) return 0;
-    return this._baseGenOf(b, sun, wind) * levelMult(b.level) * this.condFactor(b);
+    const warm = RAMP[b.kind] ? Math.max(0.05, b.warm === undefined ? 1 : b.warm) : 1;
+    return this._baseGenOf(b, sun, wind) * levelMult(b.level) * this.condFactor(b) * warm;
   };
 
   /* Poptávka města v MW – každé město má vlastní potřebu: roste s populací,
@@ -1202,10 +1232,13 @@
       const b = bi === undefined ? undefined : busOf.get(bi + ':' + l.level);
       l.flow = 0; l.load = 0; l.loss = 0;
       if (a === undefined || b === undefined) continue;
+      if (l.broken) continue; // zestárlé vedení v poruše čeká na servis
       // výpadek po zásahu bouřkou: vedení je odpojené, než se bouřka přežene
       if (l.trippedUntil && l.trippedUntil > this.time) continue;
       // jalový výkon: dlouhé střídavé vedení bez kompenzace ztrácí 20 % kapacity
       l.effCap = l.cap;
+      // stárnutí: zanedbané vedení (izolátory) ztrácí kapacitu
+      if (l.cond !== undefined && l.cond < 0.7) l.effCap *= 0.6 + 0.4 * (l.cond / 0.7);
       // počasí: bouřka a námraza srážejí kapacitu venkovních vedení v zóně
       if (!l.cable) {
         const aB = nodes[ai], bB = nodes[bi];
@@ -1664,6 +1697,27 @@
       }
     }
 
+    // --- najíždění tepelných zdrojů: běžící se udržují teplé, stojící chladnou ---
+    for (let i = 0; i < n; i++) {
+      const b = nodes[i];
+      const ramp = RAMP[b.kind];
+      if (!ramp) continue;
+      if (b.warm === undefined) b.warm = 1;   // nové zdroje se přebírají „horké"
+      if (gen[i] > 0.1) {
+        b.idleT = 0;
+        b.warm = Math.min(1, b.warm + dt / ramp);
+      } else {
+        b.idleT = (b.idleT || 0) + dt;
+        if (b.idleT > 30) {
+          const wasWarm = b.warm > 0.5;
+          b.warm = Math.max(0, b.warm - dt / 60);
+          if (wasWarm && b.warm <= 0.5) {
+            this.msg(BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] chladne – opětovné najetí potrvá', 'info');
+          }
+        }
+      }
+    }
+
     // --- palivo: spotřeba dle vyrobených MW, došlé palivo zastaví výrobu ---
     for (let i = 0; i < n; i++) {
       const b = nodes[i];
@@ -1686,6 +1740,26 @@
           this._fuelWarnT = Math.floor(this.time);
           this.msg('Smluvní dodávka paliva čeká – nedostatek peněz', 'warn');
         }
+      }
+    }
+
+    // --- stárnutí vedení: izolátory se opotřebovávají provozem ---
+    for (const l of this.lines) {
+      if (l.cond === undefined) l.cond = 1;
+      if (this._lineUnderContract(l)) {
+        // smlouva rozvodny kryje i vedení: údržba průběžně, oprava postupně
+        l.cond = Math.min(1, l.cond + 0.15 * dt);
+        if (l.broken && l.cond >= 0.5) {
+          l.broken = false;
+          this.msg('Vedení ' + LINE_TYPES[l.level].name + ' opraveno v rámci smlouvy rozvodny');
+        }
+        continue;
+      }
+      if (l.broken) continue;
+      l.cond = Math.max(0, l.cond - 0.0005 * (0.4 + 0.6 * Math.min(1, l.load)) * dt * (this.hardMode ? 1.5 : 1));
+      if (l.cond < 0.15 && Math.random() < dt * (0.15 - l.cond) * 0.8) {
+        l.broken = true;
+        this.msg('PORUCHA VEDENÍ: zestárlá trasa ' + LINE_TYPES[l.level].name + ' vypadla – potřebuje servis!', 'warn');
       }
     }
 

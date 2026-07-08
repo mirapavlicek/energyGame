@@ -43,11 +43,11 @@ zbývající (🔜) čekají na další iterace.
     a nekazí krajinu (spokojenost měst v okolí).
 18. ✅ N-1 kritérium (analytické tlačítko) – – bonusové skóre/kontrakty za síť, která přežije
     výpadek libovolného jednoho prvku; analytický nástroj „co kdyby".
-19. 🔜 Ostrovní provoz** – města s vlastním záložním zdrojem přežijí krátký
+19. ✅ Black-start / studené starty – tepelné zdroje po odstávce chladnou a najíždí pozvolna (plyn 6 s, uhlí 30 s, jádro 90 s); po blackoutu síť nastartuje baterie či voda. Původně: města s vlastním záložním zdrojem přežijí krátký
     výpadek; black-start po totálním blackoutu (postupné najíždění).
 20. ✅ Frekvence soustavy (ukazatel bilance) – – nedostatek výkonu snižuje frekvenci; pod 49 Hz
     kaskádové odpínání zátěže (brownout místo binárního blackoutu).
-21. 🔜 Údržba vedení** – vedení stárne (izolátory), občas potřebuje odstávku;
+21. ✅ Údržba vedení – vedení stárne provozem, ztrácí kapacitu a může vypadnout; panel vedení (klik) se servisem, smlouva rozvodny ho kryje. Původně: vedení stárne (izolátory), občas potřebuje odstávku;
     plánování odstávek do období nízké zátěže.
 22. ✅ Rozvodny s poli – – omezený počet vývodových polí podle velikosti
     rozvodny (malá 4, velká 12); nutnost rozšiřování.
@@ -113,17 +113,17 @@ zbývající (🔜) čekají na další iterace.
     graf podle typu zdroje.
 52. ✅ Mapové vrstvy (🗺: dosahy, zatížení) – – přepínatelné overlaye: zatížení vedení, napěťové
     hladiny, spokojenost měst, průtoky řek, větrnost, dosahy rozvoden.
-53. 🔜 Plánovací režim** – rozmístění staveb „na zkoušku" s cenovou kalkulací
+53. 🔜 Plánovací režim – rozmístění staveb „na zkoušku" s cenovou kalkulací
     před potvrzením (blueprint).
 54. ✅ Undo posledního kroku (Ctrl+Z) – – vrácení poslední stavby/demolice.
-55. 🔜 Vyhledávání a seznam objektů** – tabulka všech elektráren/rozvoden
+55. ✅ Seznam objektů (📋) s filtrem a skokem kamery. Původně: tabulka všech elektráren/rozvoden
     s filtrací (stav, zatížení, smlouvy) a skokem kamery.
 56. ✅ Klikací log (skok na místo problému) – – klikací výstrahy (skok na místo problému),
     prioritizace, ztlumení kategorií.
 57. ✅ Ukládání hry (💾/📂, localStorage) – – save/load do localStorage + export/import souboru.
 58. ✅ Kaskáda traf jedním tlačítkem – – „vybav rozvodnu kaskádou" jedním
     tlačítkem (koupí 110/22 + 22/0,4 najednou).
-59. 🔜 Mobilní ovládání** – dotyková gesta (pinch zoom, dlouhý stisk = panel).
+59. ✅ Dotykové ovládání – tažení, pinch zoom, ťuknutí. Původně: dotyková gesta (pinch zoom, dlouhý stisk = panel).
 
 ## Grafika a atmosféra
 
@@ -131,12 +131,12 @@ zbývající (🔜) čekají na další iterace.
     měst v noci, svítící okna podle napájení.
 61. ✅ Animace rotorů větrníků – – rychlost podle větru/výkonu.
 62. ✅ Počasí vizuálně (bouřkové tónování, zóny) – – déšť, sníh, bouřkové mraky nad mapou.
-63. 🔜 Stavební animace** – jeřáb a lešení během výstavby (stavba trvá čas).
+63. ✅ Stavební animace (fade-in výstavby ~3 s). Původně: jeřáb a lešení během výstavby (stavba trvá čas).
 64. ✅ Fotorežim (P) – – skrytí UI a export screenshotu mapy.
 
 ## Meta a progrese
 
-65. 🔜 Scénáře a kampaň** – série map s cíli (elektrifikuj region, zvládni
+65. ✅ Scénáře – ?scenario=1..3 (Elektrifikace / Zbohatni / Zelená síť) s cíli a vítězstvím. Původně: série map s cíli (elektrifikuj region, zvládni
     uhelný útlum, přiveď síť po katastrofě).
 66. ✅ Obtížnosti (?mode=sandbox|expert) – – sandbox (bez peněz) / normální / expert (přísné sankce,
     N-1, dražší kapitál).
@@ -147,5 +147,5 @@ zbývající (🔜) čekají na další iterace.
 
 ## Technika
 
-70. 🔜 Web Worker pro simulaci** – oddělení výpočtu od renderu (větší mapy).
-71. 🔜 Ukládání replaye** – záznam a přehrání průběhu hry.
+70. 🔜 Web Worker pro simulaci – oddělení výpočtu od renderu (větší mapy).
+71. 🔜 Ukládání replaye – záznam a přehrání průběhu hry.
