@@ -106,6 +106,10 @@ konec v rozvodně (výkon se vyvádí přes rozvodnu, jako v reálné soustavě)
   VN trafa ho nenapojí – a platí o **40 % víc** za MWh než města. Podnik bez
   proudu stojí a hlásí odstávku.
 - Den/noc cyklus ovlivňuje poptávku i výrobu (slunce, vítr).
+- **Suché a mokré roky**: každý rok má vlastní hydrologii (průtoky ±25 %),
+  hlásí ji novoroční předpověď – v suchém roce se bez záloh neobejdeš.
+- Manuál vpravo nahoře jde schovat (×) a vrátit tlačítkem `?`.
+- Další plánovaná rozšíření: viz [ROADMAP.md](ROADMAP.md).
 - **Roční období** (rok = 12 dní, 3 dny na sezónu, plynulé přechody):
   v **zimě** je spotřeba měst ~1,2× (topení, osvětlení) a den jen ~7,5 h,
   v **létě** spotřeba klesá na ~0,8× a slunce svítí ~16,5 h se silnějším

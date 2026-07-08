@@ -228,6 +228,22 @@ html, body {
   font-size: 12.5px; line-height: 1.5;
   backdrop-filter: blur(4px);
 }
+#help[hidden] { display: none; }
+#help-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 4px;
+}
+#help-head b { font-size: 13px; }
+#help-close {
+  background: transparent; border: none; color: #8b98a5;
+  font-size: 17px; line-height: 1; cursor: pointer; padding: 0 2px;
+}
+#help-close:hover { color: #fff; }
+#btn-help {
+  position: absolute; right: 10px; top: 54px;
+  width: 30px; font-weight: 700;
+}
+#btn-help[hidden] { display: none; }
 
 @media (max-width: 900px) {
   #help { display: none; }

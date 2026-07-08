@@ -1273,6 +1273,39 @@ const server = http.createServer((req, res) => {
   if (xPanel.imp !== 10) throw new Error('sjednání importu klikáním nefunguje: ' + xPanel.imp);
   if (!xPanel.statsText.includes('take-or-pay')) throw new Error('panel neukazuje podmínky smluv');
 
+  // --- schovávací manuál ---
+  const helpToggle = await page.evaluate(() => {
+    const disp = () => getComputedStyle(document.querySelector('#help')).display;
+    const btnDisp = () => getComputedStyle(document.querySelector('#btn-help')).display;
+    const visibleAtStart = disp() !== 'none';
+    document.querySelector('#help-close').click();
+    const hiddenAfterClose = disp() === 'none';
+    const btnShown = btnDisp() !== 'none';
+    document.querySelector('#btn-help').click();
+    const backAgain = disp() !== 'none' && btnDisp() === 'none';
+    return { visibleAtStart, hiddenAfterClose, btnShown, backAgain, stored: localStorage.getItem('eg_help') };
+  });
+  console.log('manuál:', JSON.stringify(helpToggle));
+  if (!helpToggle.visibleAtStart || !helpToggle.hiddenAfterClose || !helpToggle.btnShown || !helpToggle.backAgain)
+    throw new Error('schovávání manuálu nefunguje: ' + JSON.stringify(helpToggle));
+  if (helpToggle.stored !== '1') throw new Error('volba manuálu se neukládá');
+
+  // --- suché a mokré roky: každý rok jiná hydrologie (0,75–1,25×) ---
+  const hydroYears = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    const at = (year) => { sim.time = year * sim.dayLen * 12 + sim.dayLen; sim.tick(0.001); return sim._hydroYearFx; };
+    const fx = [at(0), at(1), at(2), at(3), at(4)].map((v) => +v.toFixed(3));
+    const inRange = fx.every((v) => v >= 0.75 && v <= 1.25);
+    const varies = new Set(fx).size >= 3;
+    const forecastMsg = sim.messages.some((m) => m.text.includes('Hydrologická předpověď'));
+    return { fx, inRange, varies, forecastMsg };
+  });
+  console.log('hydrologické roky:', JSON.stringify(hydroYears));
+  if (!hydroYears.inRange) throw new Error('roční hydrologie mimo rozsah: ' + JSON.stringify(hydroYears.fx));
+  if (!hydroYears.varies) throw new Error('roky se hydrologicky neliší: ' + JSON.stringify(hydroYears.fx));
+  if (!hydroYears.forecastMsg) throw new Error('chybí novoroční hydrologická předpověď');
+
   // --- cheat „funds" a měna v eurech ---
   const beforeCheat = await page.evaluate(() => EG.game.sim.money);
   await page.keyboard.type('funds');
