@@ -147,8 +147,9 @@ a spravovat v panelu:
   úroveň 3 → 14 % ceny ročně).
 - **Palivo** (klasické elektrárny) – uhelná má sklad uhlí (240 t, při stavbě
   z poloviny plný) a spotřebovává ho podle skutečně vyrobených MWh. **Bez
-  uhlí stojí!** Palivo se kupuje v panelu, nebo **smlouvou na dodávky**
-  (automaticky pod 25 % zásoby, +15 % k ceně). Nízká zásoba se hlásí.
+  uhlí stojí!** Palivo se kupuje v panelu, nebo **smlouvou na dodávky** –
+  ta dokupuje sama: první dodávka hned s podpisem, další vždy při poklesu
+  pod 50 % zásoby (+15 % k ceně). Nízká zásoba se hlásí.
 - **Modernizace** (3 úrovně) – +25 % výkonu za úroveň a pomalejší opotřebení,
   mírně vyšší provozní náklady.
 - **Schéma a toky** (jen rozvodna) – živé jednopólové schéma: přípojnice po

@@ -1821,11 +1821,14 @@ const server = http.createServer((req, res) => {
     for (let i = 0; i < 10; i++) sim.tick(0.1);
     const genAgain = coal.out;
 
-    // smlouva na palivo doplňuje automaticky
+    // smlouva na palivo doplňuje sama: hned s podpisem…
     coal.fuel = EG.FUEL.coal.cap * 0.1;
     sim.setFuelContract(coal, true);
+    const refilledOnSign = coal.fuel > EG.FUEL.coal.cap * 0.9;
+    // …a znovu, jakmile zásoba klesne pod 50 %
+    coal.fuel = EG.FUEL.coal.cap * 0.45;
     sim.tick(0.1);
-    const contractRefilled = coal.fuel > EG.FUEL.coal.cap * 0.5;
+    const contractRefilled = refilledOnSign && coal.fuel > EG.FUEL.coal.cap * 0.9;
 
     return {
       capHalf, consumes,
