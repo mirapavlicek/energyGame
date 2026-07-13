@@ -698,10 +698,12 @@
   };
 
   Sim.prototype.setFuelContract = function (b, on) {
-    if (!FUEL[b.kind]) return;
+    if (!fuelDef(b)) return;
     b.fuelContract = !!on;
-    this.msg('Smlouva na dodávky paliva ' + (b.fuelContract ? 'uzavřena' : 'vypovězena') +
-      ' – ' + BUILD[b.kind].name);
+    this.msg('Smlouva na dodávky paliva ' + (b.fuelContract ? 'uzavřena (doplňuje pod 50 %)' : 'vypovězena') +
+      ' – ' + BUILD[b.kind].name, 'info', b);
+    // první dodávka přijede hned s podpisem
+    if (b.fuelContract && b.fuel < fuelDef(b).cap - 1) this.buyFuel(b, true);
   };
 
   /* sjednání přeshraniční smlouvy: dir = 'import' | 'export', delta v MW */
@@ -1774,8 +1776,8 @@
           b._fuelWarned = false;
         }
       }
-      // smluvní dodávky: doplní sklad pod čtvrtinou
-      if (b.fuelContract && b.fuel < fd.cap * 0.25) {
+      // smluvní dodávky: samy doplní sklad, jakmile klesne pod polovinu
+      if (b.fuelContract && b.fuel < fd.cap * 0.5) {
         if (!this.buyFuel(b, true) && this._fuelWarnT !== Math.floor(this.time)) {
           this._fuelWarnT = Math.floor(this.time);
           this.msg('Smluvní dodávka paliva čeká – nedostatek peněz', 'warn');

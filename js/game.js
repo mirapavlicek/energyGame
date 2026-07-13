@@ -1092,7 +1092,7 @@
         b.fuelContract ? 'on' : '',
         () => sim.setFuelContract(b, !b.fuelContract));
       fc.id = 'bp-btn-fuelcontract';
-      fc.title = 'Dodávky přijedou automaticky, když zásoba klesne pod 25 %.';
+      fc.title = 'Palivo se dokupuje samo: první dodávka hned s podpisem, další vždy když zásoba klesne pod 50 %.';
     }
 
     const up = bpButton('⚙ Modernizace <span class="cost" id="bp-up-cost"></span>', '',
