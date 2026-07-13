@@ -11,7 +11,8 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 
 const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
-  const f = path.join(ROOT, url === '/' ? 'index.html' : url);
+  const f = path.normalize(path.join(ROOT, url === '/' ? 'index.html' : url));
+  if (!f.startsWith(ROOT + path.sep)) { res.writeHead(403); res.end(); return; }
   fs.readFile(f, (err, data) => {
     if (err) { res.writeHead(404); res.end(); return; }
     res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'text/plain' });
@@ -22,7 +23,7 @@ const server = http.createServer((req, res) => {
 (async () => {
   await new Promise((r) => server.listen(8901, r));
   const browser = await chromium.launch({
-    executablePath: '/usr/local/bin/google-chrome',
+    executablePath: process.env.CHROME_PATH || '/usr/local/bin/google-chrome',
     args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--no-sandbox'],
   });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -2200,6 +2201,132 @@ const server = http.createServer((req, res) => {
   if (maxLen.unique !== 8) throw new Error('úrovně nemají rozdílné max. délky: ' + JSON.stringify(maxLen.lens));
   if (!maxLen.far22Null) throw new Error('22 kV vedení delší než 14 dlaždic prošlo');
   if (!maxLen.ok400) throw new Error('400 kV vedení na stejnou vzdálenost neprošlo');
+
+  // --- opravy chyb: vratka kabelu, undo přehrady, zámek po bankrotu, save/load stavu ---
+  const fixes = await page.evaluate(() => {
+    const r = {};
+    const map = EG.generateMap(160, 99);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+
+    // 1) podzemní kabel: vratka počítá s příplatkem 2,5×
+    let s1 = null, s2 = null;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (!sim.canPlace('sub', x, y).ok) continue;
+      if (!s1) { s1 = sim.place('sub', x, y); continue; }
+      const d = Math.hypot(x - s1.x, y - s1.y);
+      if (d >= 5 && d <= 10) { s2 = sim.place('sub', x, y); break outer; }
+    }
+    for (const s of [s1, s2]) sim.buyTrafo(s, 't110_22');
+    const mCable0 = sim.money;
+    const cableL = sim.connect(s1, s2, 22, true);
+    const cablePaid = mCable0 - sim.money;
+    const mCable1 = sim.money;
+    sim.removeLine(cableL);
+    r.cablePaid = cablePaid;
+    r.cableRefund = sim.money - mCable1;
+    r.cableRefundOk = r.cableRefund === Math.floor(cablePaid * 0.4);
+
+    // 2) revert přehrady vrátí terén (nádrž i průtoky)
+    let dx = -1, dy = -1;
+    outer2:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (map.type[map.idx(x, y)] === EG.T.RIVER && sim.canPlace('dam', x, y).ok) { dx = x; dy = y; break outer2; }
+    }
+    const typeBefore = map.type.slice();
+    const flowBefore = map.flow.slice();
+    const dam = sim.place('dam', dx, dy);
+    let changed = 0;
+    for (let i = 0; i < map.type.length; i++) {
+      if (map.type[i] !== typeBefore[i] || map.flow[i] !== flowBefore[i]) changed++;
+    }
+    r.damChangedTiles = changed;
+    r.damReverted = sim._revertDam(dam);
+    let diffAfter = 0;
+    for (let i = 0; i < map.type.length; i++) {
+      if (map.type[i] !== typeBefore[i] || map.flow[i] !== flowBefore[i]) diffAfter++;
+    }
+    r.damDiffAfterRevert = diffAfter;
+
+    // 3) po bankrotu jsou akce zamčené
+    sim.gameOver = true;
+    const mOver = sim.money;
+    const placeOver = sim.place('sub', s1.x + 2, s1.y + 2);
+    const loanOver = sim.takeLoan(2000);
+    r.overLocked = placeOver === null && loanOver === false && sim.money === mOver;
+    sim.gameOver = false;
+
+    // 4) save/load: hardMode, gameOver a stav RNG přežijí uložení
+    sim.hardMode = true;
+    for (let i = 0; i < 5; i++) sim._rng();
+    const rngState = sim._rng.getState();
+    const saved = EG.serialize(sim);
+    const restored = EG.restore(saved);
+    r.hardKept = restored.hardMode === true;
+    r.rngKept = restored._rng.getState() === rngState;
+    sim.gameOver = true;
+    r.overKept = EG.restore(EG.serialize(sim)).gameOver === true;
+
+    // 5) validace save: špatná verze a poškozený terén se odmítnou
+    try { EG.restore(JSON.stringify({ v: 2 })); r.badVersionRejected = false; }
+    catch (e) { r.badVersionRejected = true; }
+    try {
+      const dd = JSON.parse(saved);
+      dd.type = dd.type.slice(0, 40);
+      EG.restore(JSON.stringify(dd));
+      r.corruptRejected = false;
+    } catch (e) { r.corruptRejected = true; }
+    return r;
+  });
+  console.log('opravy chyb:', JSON.stringify(fixes));
+  if (!fixes.cableRefundOk) throw new Error('vratka kabelu nesedí: ' + JSON.stringify(fixes));
+  if (!(fixes.damChangedTiles > 0)) throw new Error('přehrada nezměnila terén (test je vadný)');
+  if (!fixes.damReverted || fixes.damDiffAfterRevert !== 0) throw new Error('revert přehrady nevrátil terén: ' + fixes.damDiffAfterRevert);
+  if (!fixes.overLocked) throw new Error('po bankrotu jde dál stavět/půjčovat');
+  if (!fixes.hardKept || !fixes.rngKept || !fixes.overKept) throw new Error('save/load neuchová hardMode/gameOver/RNG: ' + JSON.stringify(fixes));
+  if (!fixes.badVersionRejected || !fixes.corruptRejected) throw new Error('poškozený save projde validací');
+
+  // --- undo přes UI: postavit rozvodnu klikem, Ctrl+Z ji vrátí i s penězi ---
+  const undoPrep = await page.evaluate(() => {
+    const { sim, map, renderer } = EG.game;
+    // pauza, ať průběžné příjmy nezkreslí kontrolu vratky
+    const spd = document.querySelector('#btn-speed');
+    let guard = 0;
+    while (!spd.textContent.includes('pauza') && guard++ < 5) spd.click();
+    sim.money = 10000;
+    // volné místo s rezervou kolem (klik se trefí i po zaokrouhlení)
+    let bx = -1, by = -1;
+    outer:
+    for (let y = 2; y < map.size - 2; y++) for (let x = 2; x < map.size - 2; x++) {
+      let ok = true;
+      for (let ddy = -1; ddy <= 1 && ok; ddy++) for (let ddx = -1; ddx <= 1; ddx++) {
+        if (!sim.canPlace('sub', x + ddx, y + ddy).ok) { ok = false; break; }
+      }
+      if (ok) { bx = x; by = y; break outer; }
+    }
+    const [wx, wy] = renderer.tileToWorld(bx, by);
+    renderer.cam.x = wx; renderer.cam.y = wy; renderer.cam.zoom = 1.5;
+    document.querySelector('.tool[data-tool="sub"]').click();
+    return { nBefore: sim.buildings.length, money: sim.money };
+  });
+  await page.waitForTimeout(200);
+  await page.mouse.click(clickPos.x, clickPos.y);
+  await page.waitForTimeout(200);
+  const undoPlaced = await page.evaluate(() => ({
+    n: EG.game.sim.buildings.length, money: EG.game.sim.money,
+  }));
+  await page.keyboard.press('Control+z');
+  await page.waitForTimeout(200);
+  const undoDone = await page.evaluate(() => {
+    document.querySelector('.tool[data-tool="pan"]').click();
+    document.querySelector('#btn-speed').click(); // pauza -> 1×
+    return { n: EG.game.sim.buildings.length, money: EG.game.sim.money };
+  });
+  console.log('undo přes UI:', JSON.stringify({ ...undoPrep, placed: undoPlaced, done: undoDone }));
+  if (undoPlaced.n !== undoPrep.nBefore + 1) throw new Error('stavba rozvodny klikem nevyšla');
+  if (undoDone.n !== undoPrep.nBefore) throw new Error('Ctrl+Z stavbu neodstranil');
+  if (undoDone.money !== undoPrep.money) throw new Error('Ctrl+Z nevrátil peníze: ' + undoDone.money + ' vs ' + undoPrep.money);
 
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {

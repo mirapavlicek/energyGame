@@ -368,12 +368,14 @@
   Sim.prototype._applyDam = function (b) {
     const m = this.map;
     const TT = T();
+    // snapshot změněných dlaždic, ať jde stavba vrátit (Ctrl+Z)
+    const undo = { flow: [], tiles: [] };
     // po proudu +60 % průtoku
     let x = b.x, y = b.y;
     for (let i = 0; i < m.size; i++) {
       const j = m.idx(x, y);
       const d = m.flowDir[j];
-      if (i > 0) m.flow[j] *= 1.6;
+      if (i > 0) { undo.flow.push([j, m.flow[j]]); m.flow[j] *= 1.6; }
       if (d < 0) break;
       x += EG.DIRS[d][0]; y += EG.DIRS[d][1];
       if (x < 0 || y < 0 || x >= m.size || y >= m.size) break;
@@ -396,6 +398,7 @@
           if (m.type[j] === TT.RIVER && d >= 0 &&
               nx + EG.DIRS[d][0] === fx && ny + EG.DIRS[d][1] === fy) {
             visited.add(j);
+            undo.tiles.push(j);
             m.type[j] = 7; // RESERVOIR
             flooded++;
             next.push([nx, ny]);
@@ -405,7 +408,21 @@
       frontier = next;
     }
     b.reservoir = flooded;
+    b._damUndo = undo;
     if (EG.onTerrainChanged) EG.onTerrainChanged();
+  };
+
+  /* revert přehrady (undo): vrátí nádrž na řeku a průtoky po proudu */
+  Sim.prototype._revertDam = function (b) {
+    const u = b._damUndo;
+    if (!u) return false;
+    const m = this.map;
+    const TT = T();
+    for (const [j, f] of u.flow) m.flow[j] = f;
+    for (const j of u.tiles) m.type[j] = TT.RIVER;
+    b._damUndo = null;
+    if (EG.onTerrainChanged) EG.onTerrainChanged();
+    return true;
   };
 
   Sim.prototype.demolish = function (x, y) {
@@ -592,8 +609,11 @@
 
   Sim.prototype.removeLine = function (line) {
     const LT = LINE_TYPES[line.level];
-    // vratka 40 % ceny odpojovaného systému (další systémy stály 70 %)
-    const paid = Math.ceil(line.len * LT.cost * ((line.n || 1) > 1 ? 0.7 : 1));
+    // vratka 40 % ceny odpojovaného systému (další systémy stály 70 %,
+    // první systém podzemního kabelu 2,5×)
+    const paid = (line.n || 1) > 1
+      ? Math.ceil(line.len * LT.cost * 0.7)
+      : Math.ceil(line.len * LT.cost * (line.cable ? 2.5 : 1));
     const refund = Math.floor(paid * 0.4);
     this.money += refund;
     if ((line.n || 1) > 1) {
@@ -1942,6 +1962,22 @@
   };
 
   /* --- uložení a načtení hry (celý stav včetně změn terénu) --- */
+  /* po bankrotu je hra u konce – žádné stavění, bourání ani smlouvy */
+  const GAME_OVER_LOCKED = ['place', 'connect', 'demolish', 'removeLine', 'buyTrafo', 'buyTrafoReg',
+    'setTrafoReg', 'buyCompensator', 'upgrade', 'upgradeRange', 'service', 'serviceLine',
+    'setContract', 'setFuelContract', 'buyFuel', 'setMothball', 'retrofitBiomass',
+    'adjustXContract', 'takeLoan', 'repayLoan'];
+  for (const fn of GAME_OVER_LOCKED) {
+    const orig = Sim.prototype[fn];
+    Sim.prototype[fn] = function (...args) {
+      if (this.gameOver) {
+        this.msg('Hra skončila (bankrot) – akce už nejsou možné. Tlačítko „Nová mapa" začne znovu.', 'warn');
+        return (fn === 'place' || fn === 'connect') ? null : false;
+      }
+      return orig.apply(this, args);
+    };
+  }
+
   const u8ToB64 = (u8) => {
     let s = '';
     for (let i = 0; i < u8.length; i += 4096) s += String.fromCharCode.apply(null, u8.subarray(i, i + 4096));
@@ -1967,15 +2003,26 @@
         blackouts: sim.blackouts, nextId: sim.nextId,
         buildings: sim.buildings, lines: sim.lines, events: sim.events || [],
         noiseT: sim._noiseT,
+        rng: sim._rng.getState ? sim._rng.getState() : undefined,
+        hard: sim.hardMode ? 1 : 0,
+        over: sim.gameOver ? 1 : 0,
       },
     });
   };
 
   EG.restore = function (json) {
     const d = JSON.parse(json);
+    // validace: verze, rozměry a struktura – poškozený save nesmí rozbít hru
+    if (!d || d.v !== 1) throw new Error('nepodporovaná verze uložené hry');
+    if (!Number.isFinite(d.size) || d.size < 16 || d.size > 2048) throw new Error('poškozený save (rozměr mapy)');
+    if (!d.sim || !Array.isArray(d.sim.buildings) || !Array.isArray(d.sim.lines)) throw new Error('poškozený save (stav hry)');
+    const typeU8 = b64ToU8(d.type);
+    const flowU8 = b64ToU8(d.flow);
+    if (typeU8.length !== d.size * d.size) throw new Error('poškozený save (terén)');
+    if (flowU8.length !== d.size * d.size * 4) throw new Error('poškozený save (řeky)');
     const map = EG.generateMap(d.size, d.seed);
-    map.type.set(b64ToU8(d.type));
-    map.flow.set(new Float32Array(b64ToU8(d.flow).buffer));
+    map.type.set(typeU8);
+    map.flow.set(new Float32Array(flowU8.buffer));
     map.cities = d.cities;
     map.industries = d.industries;
     map.geoFields = d.geoFields;
@@ -1984,7 +2031,9 @@
     if (d.railTiles) map.railTiles = d.railTiles;
     const sim = new Sim(map);
     sim.buildings = d.sim.buildings;   // včetně přeshraničních bodů
-    sim.lines = d.sim.lines;
+    // vedení bez existujících koncových staveb se zahodí (poškozený save)
+    const ids = new Set(sim.buildings.map((b) => b.id));
+    sim.lines = d.sim.lines.filter((l) => ids.has(l.a) && ids.has(l.b));
     sim.events = d.sim.events;
     sim.money = d.sim.money;
     sim.time = d.sim.time;
@@ -1993,7 +2042,11 @@
     sim.blackouts = d.sim.blackouts;
     sim.nextId = d.sim.nextId;
     sim._noiseT = d.sim.noiseT;
+    sim.hardMode = !!d.sim.hard;
+    sim.gameOver = !!d.sim.over;
     sim.tick(0.001);
+    // stav RNG až po ticku – náhodné události pokračují přesně tam, kde byly
+    if (d.sim.rng !== undefined && sim._rng.setState) sim._rng.setState(d.sim.rng);
     return sim;
   };
 

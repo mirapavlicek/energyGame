@@ -460,6 +460,8 @@
       setupMinimap();
       closePanel();
       lineFrom = null;
+      undoStack.length = 0; // staré undo záznamy patří předchozí hře
+      $('#gameover').hidden = !sim.gameOver;
       sim.msg('📂 Hra načtena (den ' + (sim.day || 1) + ')');
       return true;
     } catch (e) {
@@ -700,16 +702,26 @@
   /* undo poslední stavby (Ctrl+Z) – plná vratka */
   function undoLast() {
     if (planning || replaying) { sim.msg('V plánu/replayi undo nefunguje – použij Zrušit', 'warn'); return; }
+    if (sim.gameOver) { sim.msg('Hra skončila – undo už nepomůže', 'warn'); return; }
     const a = undoStack.pop();
     if (!a) { sim.msg('Není co vracet', 'warn'); return; }
     if (a.t === 'b') {
       const b = sim.buildings.find((o) => o.id === a.id);
       if (!b) { sim.msg('Stavba už neexistuje', 'warn'); return; }
       if (b === selected) closePanel();
+      if (b.kind === 'dam') sim._revertDam(b); // vrátit nádrž a průtoky
+      // plná vratka i za vedení, která se stavbou zmizí
+      let lineRefund = 0;
+      for (const l of sim.lines) {
+        if (l.a !== b.id && l.b !== b.id) continue;
+        const LT = EG.LINE_TYPES[l.level];
+        lineRefund += Math.ceil(l.len * LT.cost * (l.cable ? 2.5 : 1)) +
+          Math.max(0, (l.n || 1) - 1) * Math.ceil(l.len * LT.cost * 0.7);
+      }
       sim.buildings = sim.buildings.filter((o) => o !== b);
       sim.lines = sim.lines.filter((l) => l.a !== b.id && l.b !== b.id);
-      sim.money += a.cost;
-      sim.msg('↩ Stavba vrácena (+' + a.cost + ')');
+      sim.money += a.cost + lineRefund;
+      sim.msg('↩ Stavba vrácena (+' + (a.cost + lineRefund) + ')');
     } else {
       const l = sim.lines.find((o) => o.id === a.id);
       if (!l) { sim.msg('Vedení už neexistuje', 'warn'); return; }
@@ -1293,7 +1305,10 @@
     if (b.bioRetrofit) rows += 'Palivo po retrofitu: <span class="val">biomasa (štěpka)</span><br>';
     rows += 'Úroveň: <span class="val">' + b.level + ' / ' + EG.MAX_LEVEL + '</span>';
     if (b.kind === 'sub') rows += ' · dosah <span class="val">+' + (b.rangeLevel || 0) * 2 + '</span>';
-    rows += '<br>Provoz: <span class="val">' + (def.upkeep * EG.levelMult(b.level) * (b.mothball ? 0.25 : 1)).toFixed(1) + '/s</span>';
+    // skutečně účtovaný provoz (ekonomika násobí upkeep 0,01 a inflací)
+    const upkeepRate = def.upkeep * EG.levelMult(b.level) * (b.mothball ? 0.25 : 1) *
+      0.01 * Math.pow(1.02, sim.yearIdx || 0);
+    rows += '<br>Provoz: <span class="val">' + (upkeepRate * 60).toFixed(1) + '/min</span>';
     if (b.contract) rows += ' · <span class="val">smlouva ✓ −' + sim.contractYearCost(b) + '/rok</span>';
     if (b.broken) rows += '<br><span class="bad">⚠ PORUCHA – mimo provoz, nutný servis!</span>';
     $('#bp-stats').innerHTML = rows;
