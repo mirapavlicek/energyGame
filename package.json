@@ -4,10 +4,17 @@
   "description": "Budovatelská strategie o stavbě energetické sítě – 2D izometrie ve WebGL2, čistě v prohlížeči.",
   "scripts": {
     "start": "python3 -m http.server 8000",
-    "test": "node test/smoke.js"
+    "test": "node test/smoke.js",
+    "build:web": "node scripts/build-web.js",
+    "ios:sync": "node scripts/build-web.js && npx cap sync ios"
   },
   "devDependencies": {
-    "playwright-core": "^1.50.0"
+    "playwright-core": "^1.50.0",
+    "@capacitor/cli": "^7.0.0"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/ios": "^7.0.0"
   },
   "license": "MIT"
 }

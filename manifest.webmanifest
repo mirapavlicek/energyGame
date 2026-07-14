@@ -1,0 +1,16 @@
+{
+  "name": "EnergyGame – budovatel energetické sítě",
+  "short_name": "EnergyGame",
+  "description": "Budovatelská strategie o stavbě energetické sítě: elektrárny, rozvodny, trafa a fyzikálně věrné toky výkonu.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#171e26",
+  "theme_color": "#171e26",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-1024.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }
+  ]
+}

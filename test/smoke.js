@@ -49,6 +49,25 @@ const server = http.createServer((req, res) => {
   console.log('checks:', JSON.stringify(checks));
   if (!checks.webgl2) throw new Error('WebGL2 se nepodařilo inicializovat');
 
+  // --- PWA: manifest, ikony a service worker ---
+  const pwa = await page.evaluate(async () => {
+    const mf = await fetch('manifest.webmanifest').then((r) => r.ok ? r.json() : null).catch(() => null);
+    const icon = await fetch('icons/icon-192.png').then((r) => r.ok).catch(() => false);
+    let swOk = false;
+    if ('serviceWorker' in navigator) {
+      for (let i = 0; i < 20 && !swOk; i++) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        swOk = regs.length > 0;
+        if (!swOk) await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+    return { name: mf && mf.name, display: mf && mf.display, icon, swOk };
+  });
+  console.log('PWA:', JSON.stringify(pwa));
+  if (!pwa.name || pwa.display !== 'fullscreen') throw new Error('manifest PWA chybí nebo je špatně');
+  if (!pwa.icon) throw new Error('chybí ikona PWA');
+  if (!pwa.swOk) throw new Error('service worker se nezaregistroval');
+
   // --- dvojnásobná mapa: 226² ≈ 51 000 dlaždic a úměrně víc obsahu ---
   const bigmap = await page.evaluate(() => ({
     size: EG.game.map.size,
