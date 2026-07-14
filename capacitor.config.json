@@ -1,0 +1,9 @@
+{
+  "appId": "cz.mirapavlicek.energygame",
+  "appName": "EnergyGame",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#171e26"
+  }
+}
