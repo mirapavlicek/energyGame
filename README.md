@@ -124,6 +124,8 @@ konec v rozvodně (výkon se vyvádí přes rozvodnu, jako v reálné soustavě)
   hlásí ji novoroční předpověď – v suchém roce se bez záloh neobejdeš.
 - Manuál vpravo nahoře jde schovat (×) a vrátit tlačítkem `?`.
 - Další plánovaná rozšíření: viz [ROADMAP.md](ROADMAP.md).
+- **iPhone**: hra funguje jako PWA (Přidat na plochu) a v repu je hotový
+  nativní Xcode projekt (Capacitor) – postup v [IOS.md](IOS.md).
 - **Roční období** (rok = 12 dní, 3 dny na sezónu, plynulé přechody):
   v **zimě** je spotřeba měst ~1,2× (topení, osvětlení) a den jen ~7,5 h,
   v **létě** spotřeba klesá na ~0,8× a slunce svítí ~16,5 h se silnějším
