@@ -25,6 +25,7 @@
     110: [0.62, 0.66, 0.72],
     22:  [0.42, 0.85, 0.45],
     11:  [0.72, 0.90, 0.45],
+    1.5: [1.00, 0.40, 0.20], // silná DC přípojnice bateriové farmy
     0.5: [1.00, 0.55, 0.30], // DC přípojnice baterií
     0.4: [0.95, 0.95, 0.88],
   };
@@ -61,7 +62,7 @@
       hydro: S.HYDRO, dam: S.DAM, coal: S.COAL, solar: S.SOLAR, wind: S.WIND,
       sub: S.SUBST, psh: S.PSH, battery: S.BATT, xborder: S.XBORDER,
       nuclear: S.NUKE, gas: S.GASP, geo: S.GEOTH, bio: S.BIOG, waste: S.WASTE,
-      owind: S.OWIND, h2: S.H2, bess: S.BESS,
+      owind: S.OWIND, h2: S.H2, bess: S.BESS, tesla: S.MCONV,
     }[kind];
   }
 
@@ -1326,6 +1327,11 @@
         rows += '<br>';
       }
     }
+    if (EG.sizeOf(b.kind) > 1) {
+      const f = EG.footprintOf(b.kind, b.x, b.y);
+      rows += 'Areál: <span class="val">' + f.s + '×' + f.s + ' dlaždic</span> ' +
+        '<span class="dim">[' + f.x0 + ',' + f.y0 + ']–[' + f.x1 + ',' + f.y1 + ']</span><br>';
+    }
     if (b.mothball) rows += '<span class="bad">⏻ KONZERVOVÁNA – nevyrábí</span><br>';
     if (b.bioRetrofit) rows += 'Palivo po retrofitu: <span class="val">biomasa (štěpka)</span><br>';
     rows += 'Úroveň: <span class="val">' + b.level + ' / ' + EG.MAX_LEVEL + '</span>';
@@ -1535,7 +1541,13 @@
       g.fillRect(ind.x - 1.5, ind.y - 1.5, 4, 4);
     }
     for (const b of sim.buildings) {
-      if (b.kind === 'xborder') {
+      if (EG.sizeOf(b.kind) > 1) {
+        const f = EG.footprintOf(b.kind, b.x, b.y);
+        g.fillStyle = '#f0f4f8';
+        g.fillRect(f.x0, f.y0, f.s, f.s);
+        g.strokeStyle = '#c9302c'; g.lineWidth = 1;
+        g.strokeRect(f.x0 + 0.5, f.y0 + 0.5, f.s - 1, f.s - 1);
+      } else if (b.kind === 'xborder') {
         g.fillStyle = '#7ec8ff';
         g.fillRect(b.x - 2, b.y - 2, 5, 5);
       } else {
@@ -1696,10 +1708,20 @@
           sId = b.kind === 'wind' ? S.WIND2 : S.OWIND2;
         }
       }
+      // víceplošná stavba: plochu vyplní betonový areál s řadami bloků,
+      // na kotvě stojí měnírna (dekorace se kreslí jen k ní)
+      if (EG.sizeOf(b.kind) > 1) {
+        const f = EG.footprintOf(b.kind, b.x, b.y);
+        for (let ty = f.y0; ty <= f.y1; ty++) for (let tx = f.x0; tx <= f.x1; tx++) {
+          if (tx === b.x && ty === b.y) continue;
+          const edge = tx === f.x0 || tx === f.x1 || ty === f.y0 || ty === f.y1;
+          spr.push([tx, ty, edge ? S.MPAD : S.MPACK, null, b, null, true]);
+        }
+      }
       spr.push([b.x, b.y, sId, null, b]);
     }
     spr.sort((p, q) => (p[0] + p[1]) - (q[0] + q[1]));
-    for (const [x, y, sId, city, b, ind] of spr) {
+    for (const [x, y, sId, city, b, ind, plain] of spr) {
       let dim = 1;
       if (city && (city.powered || 0) < 0.5 && sim.sun < 0.15) dim = 0.55; // blackout v noci
       if (ind && (ind.powered || 0) < 0.5) dim = 0.62; // stojící podnik potemní
@@ -1727,6 +1749,8 @@
       }
       renderer.pushSprite(x, y, sId, tintR, tintG, tintB, alpha);
 
+      if (plain) continue; // dlaždice areálu: bez hvězd a ukazatele nabití
+
       // hvězdy modernizace nad budovou (úroveň 2 = ★, úroveň 3 = ★★)
       if (b && b.level > 1) {
         const nStars = b.level - 1;
@@ -1749,6 +1773,18 @@
     // vybraná budova: zvýraznění + dosah rozvodny
     if (selected && sim.buildings.includes(selected)) {
       renderer.pushSprite(selected.x, selected.y, S.SEL, 1, 1, 1, 0.9);
+      // víceplošná stavba: obtáhnout obvod areálu
+      if (EG.sizeOf(selected.kind) > 1) {
+        const f = EG.footprintOf(selected.kind, selected.x, selected.y);
+        for (let tx = f.x0; tx <= f.x1; tx++) {
+          renderer.pushSprite(tx, f.y0, S.CITYRING, 1, 0.9, 0.4, 0.7);
+          renderer.pushSprite(tx, f.y1, S.CITYRING, 1, 0.9, 0.4, 0.7);
+        }
+        for (let ty = f.y0 + 1; ty < f.y1; ty++) {
+          renderer.pushSprite(f.x0, ty, S.CITYRING, 1, 0.9, 0.4, 0.7);
+          renderer.pushSprite(f.x1, ty, S.CITYRING, 1, 0.9, 0.4, 0.7);
+        }
+      }
       if (selected.kind === 'sub') {
         const R = sim.subRange(selected);
         for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
@@ -1793,7 +1829,17 @@
       if (tool === 'demolish') ok = !!sim.buildingAt(gx, gy) || !!lineNear(hoverF[0], hoverF[1]);
       else if (tool === 'line') ok = !!sim.buildingAt(gx, gy);
       else ok = sim.canPlace(tool, gx, gy).ok;
-      renderer.pushSprite(gx, gy, ok ? S.SEL : S.BAD);
+      // víceplošná stavba: ukázat celou plochu a označit vadné dlaždice
+      const size = EG.BUILD[tool] ? EG.sizeOf(tool) : 1;
+      if (size > 1) {
+        const f = EG.footprintOf(tool, gx, gy);
+        for (let ty = f.y0; ty <= f.y1; ty++) for (let tx = f.x0; tx <= f.x1; tx++) {
+          const tileOk = sim._canPlaceTile(tool, tx, ty).ok;
+          renderer.pushSprite(tx, ty, tileOk ? S.SEL : S.BAD, 1, 1, 1, tileOk ? 0.5 : 0.8);
+        }
+      } else {
+        renderer.pushSprite(gx, gy, ok ? S.SEL : S.BAD);
+      }
       if (ok && tool !== 'demolish' && tool !== 'line') {
         renderer.pushSprite(gx, gy, kindSprite(tool), 1, 1, 1, 0.55);
       }

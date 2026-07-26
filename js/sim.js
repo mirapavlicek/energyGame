@@ -55,6 +55,13 @@
         'Články pracují stejnosměrně, proto se napojuje přímo na přípojnici DC 500 V; ' +
         'do střídavé sítě ji převede měnírna 22 kV/500 V DC v rozvodně.',
     },
+    tesla: {
+      name: 'Tesla Power Grid', cost: 30000, upkeep: 60, size: 10,
+      desc: 'Bateriová farma na ploše 10×10 dlaždic: 18 000 MW·s (15× vodíkové úložiště), ' +
+        '±400 MW, účinnost 95 %. Tisíce paralelních bloků sdílí přípojnici DC 1500 V, ' +
+        'která unese plný výkon; do sítě ji vyvede měnírna 400 kV/1500 V DC. ' +
+        'Strategická rezerva, která přečká i dlouhé bezvětří – za cenu celého kraje.',
+    },
     nuclear: {
       name: 'Jaderná elektrárna', cost: 2600, upkeep: 30,
       desc: 'Jen u velké řeky (chladicí voda). Stabilních 260 MW na 800 kV, palivo vydrží roky.',
@@ -105,7 +112,7 @@
      `dc` = stejnosměrná hladina: nemá jalový výkon, takže ji netrápí
      kompenzace, ale u 500 V znamená nízké napětí obrovské proudy –
      proto jen pár dlaždic a vysoké ztráty. */
-  const LEVELS = [800, 500, 400, 220, 110, 22, 11, 0.5, 0.4];
+  const LEVELS = [800, 500, 400, 220, 110, 22, 11, 1.5, 0.5, 0.4];
   const LINE_TYPES = {
     500: { name: 'HVDC 500 kV', cls: 'HVDC', cap: 500, cost: 28, maxLen: 200, loss: 0.0006, dc: true },
     800: { name: 'VVN 800 kV', cls: 'VVN', cap: 800, cost: 34, maxLen: 60, loss: 0.0016 },
@@ -114,6 +121,7 @@
     110: { name: 'VVN 110 kV', cls: 'VVN', cap: 80,  cost: 6,  maxLen: 28, loss: 0.0034 },
     22:  { name: 'VN 22 kV',   cls: 'VN',  cap: 30,  cost: 3,  maxLen: 14, loss: 0.0060 },
     11:  { name: 'VN 11 kV',   cls: 'VN',  cap: 14,  cost: 2,  maxLen: 10, loss: 0.0080 },
+    1.5: { name: 'DC 1500 V',  cls: 'DC',  cap: 500, cost: 9,  maxLen: 6,  loss: 0.0035, dc: true },
     0.5: { name: 'DC 500 V',   cls: 'DC',  cap: 150, cost: 4,  maxLen: 3,  loss: 0.0110, dc: true },
     0.4: { name: 'NN 400 V',   cls: 'NN',  cap: 5,   cost: 1,  maxLen: 5,  loss: 0.0120 },
   };
@@ -123,6 +131,7 @@
     dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22, psh: 110, battery: 22, xborder: 400,
     nuclear: 800, gas: 110, geo: 22, bio: 22, waste: 22, owind: 22, h2: 110,
     bess: 0.5, // baterie jsou stejnosměrné – vyvedené na DC přípojnici
+    tesla: 1.5, // farma sdílí jednu silnou stejnosměrnou přípojnici
   };
 
   /* pořadí nasazování zdrojů (merit order): levné jedou první.
@@ -155,6 +164,7 @@
     battery: { cap: 80, maxP: 25, eff: 0.90 },
     bess: { cap: 700, maxP: 140, eff: 0.94 }, // kontejnerová baterie na DC přípojnici
     h2: { cap: 1200, maxP: 40, eff: 0.45 }, // vodík: obří, ale ztrátový (sezónní)
+    tesla: { cap: 18000, maxP: 400, eff: 0.95 }, // bateriová farma 10×10 dlaždic
   };
 
   /* --- Vítr: rychlost v m/s a výkonová křivka turbíny ---
@@ -196,6 +206,7 @@
   const TRAFOS = {
     thvdc: { hi: 500, lo: 400, cap: 500, cost: 800, name: 'HVDC měnírna 500/400' },
     tdc05: { hi: 22, lo: 0.5, cap: 160, cost: 260, name: 'měnírna 22 kV/500 V DC' },
+    tdc15: { hi: 400, lo: 1.5, cap: 450, cost: 2200, name: 'měnírna 400 kV/1500 V DC' },
     t800_400: { hi: 800, lo: 400, cap: 600, cost: 700, name: '800⇄400 kV' },
     t400_220: { hi: 400, lo: 220, cap: 350, cost: 420, name: '400⇄220 kV' },
     t400_110: { hi: 400, lo: 110, cap: 250, cost: 380, name: '400⇄110 kV' },
@@ -232,8 +243,24 @@
   const WEAR = {
     hydro: 0.0011, dam: 0.0006, coal: 0.0018, solar: 0.0008, wind: 0.0014, sub: 0.0007,
     psh: 0.0008, battery: 0.0012, nuclear: 0.0007, gas: 0.0015, geo: 0.0006, bio: 0.0012,
-    waste: 0.0014, owind: 0.0016, h2: 0.0010, bess: 0.0011,
+    waste: 0.0014, owind: 0.0016, h2: 0.0010, bess: 0.0011, tesla: 0.0006,
   };
+
+  /* Víceplošné stavby: `size` v BUILD je hrana čtvercové plochy (bez ní 1).
+     Kotva stavby je dlaždice blíž levému hornímu rohu středu, footprint
+     sahá od −h0 do +h1 – u sudé hrany je tedy o jednu dlaždici delší vpravo. */
+  const sizeOf = (kind) => (BUILD[kind] && BUILD[kind].size) || 1;
+  function footprintOf(kind, x, y) {
+    const s = sizeOf(kind);
+    const h0 = Math.floor((s - 1) / 2);
+    return { x0: x - h0, y0: y - h0, x1: x - h0 + s - 1, y1: y - h0 + s - 1, s };
+  }
+  function inFootprint(b, x, y) {
+    if (b.x === x && b.y === y) return true;
+    if (sizeOf(b.kind) === 1) return false;
+    const f = footprintOf(b.kind, b.x, b.y);
+    return x >= f.x0 && x <= f.x1 && y >= f.y0 && y <= f.y1;
+  }
 
   const SEASONS = ['jaro', 'léto', 'podzim', 'zima'];
   const YEAR_DAYS = 12;       // herních dní v roce (3 na sezónu)
@@ -286,11 +313,31 @@
     return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
   };
 
+  /* Vrací stavbu na dlaždici – u víceplošných staveb kdekoli v jejich ploše. */
   Sim.prototype.buildingAt = function (x, y) {
-    return this.buildings.find((b) => b.x === x && b.y === y) || null;
+    return this.buildings.find((b) => inFootprint(b, x, y)) || null;
   };
 
+  Sim.prototype.footprintOf = function (b) {
+    return footprintOf(b.kind, b.x, b.y);
+  };
+
+  /* Umístění stavby: u víceplošných musí projít každá dlaždice plochy. */
   Sim.prototype.canPlace = function (kind, x, y) {
+    if (sizeOf(kind) === 1) return this._canPlaceTile(kind, x, y);
+    const f = footprintOf(kind, x, y);
+    let blocked = 0, why = '';
+    for (let ty = f.y0; ty <= f.y1; ty++) for (let tx = f.x0; tx <= f.x1; tx++) {
+      const chk = this._canPlaceTile(kind, tx, ty);
+      if (!chk.ok) { blocked++; if (!why) why = chk.why; }
+    }
+    if (blocked > 0) {
+      return { ok: false, why: 'Plocha ' + f.s + '×' + f.s + ': ' + blocked + ' dlaždic nevyhovuje (' + why + ')' };
+    }
+    return { ok: true };
+  };
+
+  Sim.prototype._canPlaceTile = function (kind, x, y) {
     const m = this.map;
     if (x < 0 || y < 0 || x >= m.size || y >= m.size) return { ok: false, why: 'Mimo mapu' };
     const t = m.type[m.idx(x, y)];
@@ -326,6 +373,10 @@
       case 'waste':
       case 'h2':
         if (t === TT.WATER || t === TT.RIVER || t === TT.MOUNTAIN) return { ok: false, why: 'Jen na pevnině' };
+        return { ok: true };
+      case 'tesla':
+        // farma potřebuje rovinu: kopce ani les se na 100 dlaždic neplanýrují
+        if (t !== TT.GRASS && t !== TT.SAND) return { ok: false, why: 'jen rovina bez lesa' };
         return { ok: true };
       case 'nuclear': {
         if (t === TT.WATER || t === TT.RIVER || t === TT.MOUNTAIN) return { ok: false, why: 'Jen na pevnině' };
@@ -402,9 +453,11 @@
       b.fuel = FUEL[kind].cap * 0.5; // startovní zásoba na rozjezd
       b.fuelContract = false;        // automatické dodávky za přirážku
     }
+    if (sizeOf(kind) > 1) b.size = sizeOf(kind); // plocha se uloží i do save
     this.buildings.push(b);
     if (kind === 'dam') this._applyDam(b);
-    this.msg(BUILD[kind].name + ' postavena (−' + cost + ')');
+    this.msg(BUILD[kind].name + ' postavena (−' + cost + ')' +
+      (b.size ? ' na ploše ' + b.size + '×' + b.size : ''));
     return b;
   };
 
@@ -2172,4 +2225,6 @@
   EG.MAX_RANGE_LEVEL = MAX_RANGE_LEVEL;
   EG.WIND = WIND;
   EG.windCurve = windCurve;
+  EG.sizeOf = sizeOf;
+  EG.footprintOf = footprintOf;
 })();

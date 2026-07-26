@@ -1,7 +1,7 @@
 # ⚡ EnergyGame – roadmapa rozšíření
 
 Zásobník nápadů na další vývoj hry, seskupený do oblastí.
-Všech 73 položek je implementováno (✅), byť některé ve zjednodušené podobě.
+Všech 74 položek je implementováno (✅), byť některé ve zjednodušené podobě.
 
 ## Zdroje a technologie
 
@@ -39,6 +39,10 @@ Všech 73 položek je implementováno (✅), byť některé ve zjednodušené po
     ±140 MW, účinnost 94 %; napojuje se přímo na DC 500 V a do střídavé
     sítě přes měnírnu 22 kV/500 V DC. Nízké napětí = obrovské proudy,
     takže DC vedení unese jen 3 dlaždice.
+74. ✅ Tesla Power Grid – bateriová farma na ploše 10×10 dlaždic (první
+    víceplošná stavba ve hře) za 30 000: 18 000 MW·s (15× vodík), ±400 MW,
+    účinnost 95 %, přípojnice DC 1500 V na plný výkon a měnírna
+    400 kV/1500 V DC. Náhled ukáže, které dlaždice plochy nevyhovují.
 
 ## Síť a fyzika
 

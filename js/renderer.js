@@ -269,16 +269,31 @@
     this.terrainCount = n;
   };
 
-  Renderer.prototype.beginDynamic = function () { this.dynCount = 0; this.lineCount = 0; };
+  Renderer.prototype.beginDynamic = function () {
+    this.dynCount = 0; this.lineCount = 0;
+    /* Viditelný výřez ve world px. Sprity mimo něj se vůbec neposílají na
+       GPU – při velkých mapách jde o stovky zbytečných quadů za snímek.
+       Rezerva pokrývá vysoké sprity (kotva je 80 px nad spodním okrajem
+       buňky) i dekorace kreslené s posunem o zlomek dlaždice. */
+    const halfW = this.canvas.clientWidth / 2 / this.cam.zoom;
+    const halfH = this.canvas.clientHeight / 2 / this.cam.zoom;
+    this.cull = {
+      x0: this.cam.x - halfW - 64, x1: this.cam.x + halfW + 64,
+      y0: this.cam.y - halfH - 48, y1: this.cam.y + halfH + 112,
+    };
+  };
 
   Renderer.prototype.pushSprite = function (gx, gy, sprite, r, g, b, a) {
+    const wx = isoX(gx, gy), wy = isoY(gx, gy);
+    const c = this.cull;
+    if (c && (wx < c.x0 || wx > c.x1 || wy < c.y0 || wy > c.y1)) return;
     if (this.dynCount * 8 >= this.dynData.length) {
       const bigger = new Float32Array(this.dynData.length * 2);
       bigger.set(this.dynData); this.dynData = bigger;
     }
     const o = this.dynCount * 8;
     const d = this.dynData;
-    d[o] = isoX(gx, gy); d[o + 1] = isoY(gx, gy); d[o + 2] = 0;
+    d[o] = wx; d[o + 1] = wy; d[o + 2] = 0;
     d[o + 3] = sprite;
     d[o + 4] = r === undefined ? 1 : r;
     d[o + 5] = g === undefined ? 1 : g;

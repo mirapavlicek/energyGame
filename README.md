@@ -41,6 +41,14 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
   proudy, takže DC vedení unese jen **3 dlaždice** a má vysoké ztráty –
   úložiště patří hned k rozvodně. Zato stejnosměrná hladina nemá jalový
   výkon, takže ji netrápí kompenzace.
+- **Tesla Power Grid** je vrchol téhle větve: bateriová farma na ploše
+  **10×10 dlaždic** za **30 000**, s kapacitou **18 000 MW·s** (15× vodíkové
+  úložiště), výkonem **±400 MW** a účinností 95 %. Je to jediná víceplošná
+  stavba ve hře – potřebuje sto dlaždic rovinatého terénu, náhled pod
+  kurzorem rovnou ukáže, které dlaždice nevyhovují. Tisíce paralelních
+  bloků sdílí přípojnici **DC 1500 V**, která unese plný výkon farmy
+  (500 MW, max 6 dlaždic), a do sítě ji vyvede **měnírna 400 kV/1500 V DC**.
+  Strategická rezerva, která pokryje i několik dní bezvětří.
 - **Regulační trafa**: k instalovanému trafu lze dokoupit přepínač odboček
   (50 % ceny trafa) a pak tok trafem řídit – **▲ přednostní tok** ho posílí,
   **▼ škrcení** ho omezí a přesměruje výkon na paralelní cesty.
@@ -66,7 +74,7 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
 
 ### Napěťové úrovně a trafa
 
-Vedení existuje v devíti napěťových úrovních – liší se kapacitou, cenou za
+Vedení existuje v deseti napěťových úrovních – liší se kapacitou, cenou za
 dlaždici a maximální délkou:
 
 | Úroveň | Kapacita | Cena/dl | Max. délka | Ztráty/dl¹ |
@@ -78,6 +86,7 @@ dlaždici a maximální délkou:
 | VVN 110 kV | 80 MW | 6 | 28 | 0,34 % |
 | VN 22 kV | 30 MW | 3 | 14 | 0,60 % |
 | VN 11 kV | 14 MW | 2 | 10 | 0,80 % |
+| DC 1500 V | 500 MW | 9 | 6 | 0,35 % |
 | DC 500 V | 150 MW | 4 | 3 | 1,10 % |
 | NN 400 V | 5 MW | 1 | 5 | 1,20 % |
 
@@ -109,9 +118,10 @@ Města se napájí z NN strany rozvodny.
 
 **HVDC 500 kV**: stejnosměrná spojka pro extrémní vzdálenosti (až 200
 dlaždic, 500 MW, minimální ztráty) – na obou koncích potřebuje drahou
-**měnírnu** (HVDC 500/400). **DC 500 V** je naopak stejnosměrná přípojnice
-bateriových úložišť: jen 3 dlaždice, ale velká kapacita a bez jalového
-výkonu; do střídavé sítě ji propojí **měnírna 22 kV/500 V DC**.
+**měnírnu** (HVDC 500/400). **DC 500 V** a **DC 1500 V** jsou naopak
+stejnosměrné přípojnice bateriových úložišť: krátké (3 a 6 dlaždic), ale
+s velkou kapacitou a bez jalového výkonu; do střídavé sítě je propojí
+**měnírna 22 kV/500 V DC**, resp. **400 kV/1500 V DC**.
 **Podzemní kabel** (přepínač v paletě vedení)
 stojí 2,5×, ale odolá bouřkám, má nižší ztráty a netrpí na jalový výkon.
 Dlouhá střídavá vedení (přes 60 % max. délky) bez **kompenzace jalového

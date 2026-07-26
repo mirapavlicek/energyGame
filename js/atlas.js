@@ -5,7 +5,7 @@
   'use strict';
   const EG = window.EG;
 
-  const CELL_W = 64, CELL_H = 96, COLS = 8, ROWS = 5;
+  const CELL_W = 64, CELL_H = 96, COLS = 8, ROWS = 6;
   const HW = 32, HH = 16;          // poloosy kosočtverce
   const AX = 32, AY = 80;          // kotva (střed dlaždice) uvnitř buňky
 
@@ -15,6 +15,7 @@
     SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22, XBORDER: 23,
     STAR: 24, PIP: 25, NUKE: 26, GASP: 27, GEOTH: 28, BIOG: 29, WASTE: 30, OWIND: 31,
     H2: 32, GEOFIELD: 33, WIND2: 34, OWIND2: 35, TRACT: 36, BESS: 37,
+    MPAD: 38, MPACK: 39, MCONV: 40,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -308,6 +309,47 @@
       c.moveTo(AX - 3, AY - 26); c.quadraticCurveTo(AX, AY - 29, AX + 3, AY - 26);
       c.lineTo(AX + 3, AY - 24.5); c.quadraticCurveTo(AX, AY - 27.5, AX - 3, AY - 24.5);
       c.closePath(); c.fill();
+    });
+
+    /* Bateriová farma se skládá ze tří dlaždic dokola: betonová plocha,
+       řada bateriových bloků a středová měnírna se stejnosměrnou přípojnicí. */
+    at(S.MPAD, (c) => {
+      tile(c, '#8e9298', '#a2a6ac', '#74777c');
+      c.strokeStyle = 'rgba(255,255,255,0.16)'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(AX - 20, AY - 2); c.lineTo(AX + 20, AY - 2); c.stroke();
+    });
+    at(S.MPACK, (c) => {
+      tile(c, '#8e9298', '#a2a6ac', '#74777c');
+      // dvě řady bílých bateriových bloků
+      for (const [dx, dy] of [[-8, 4], [6, -3]]) {
+        c.save(); c.translate(dx, dy);
+        box(c, 10, 5, 11, '#d8dce1', '#f2f4f6', '#c2c7cd');
+        c.fillStyle = '#9aa0a8';
+        for (let q = 0; q < 4; q++) c.fillRect(AX - 7 + q * 4, AY - 12, 2, 6);
+        c.fillStyle = '#c9302c'; c.fillRect(AX - 8, AY - 14, 4, 1.6);
+        c.restore();
+      }
+      // stejnosměrná přípojnice podél řady
+      c.strokeStyle = '#e0873c'; c.lineWidth = 1.6;
+      c.beginPath(); c.moveTo(AX - 18, AY + 3); c.lineTo(AX + 18, AY - 6); c.stroke();
+    });
+    at(S.MCONV, (c) => {
+      tile(c, '#8e9298', '#a2a6ac', '#74777c');
+      // měnírna: hala s chladiči a stožárem vývodu
+      box(c, 14, 7, 18, '#b9bec5', '#e6e9ec', '#cbd0d6');
+      c.fillStyle = '#7d838b';
+      for (let q = 0; q < 5; q++) c.fillRect(AX - 11 + q * 5, AY - 20, 3, 8);
+      c.strokeStyle = '#6e7680'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(AX, AY - 25); c.lineTo(AX, AY - 46); c.stroke();
+      c.strokeStyle = '#4a4f57'; c.lineWidth = 1.6;
+      c.beginPath(); c.moveTo(AX - 12, AY - 42); c.lineTo(AX + 12, AY - 42); c.stroke();
+      // označení =/~ a červený akcent
+      c.fillStyle = '#ffe14d'; c.fillRect(AX - 4, AY - 33, 8, 1.8);
+      c.beginPath();
+      c.moveTo(AX - 4, AY - 29); c.quadraticCurveTo(AX, AY - 32, AX + 4, AY - 29);
+      c.lineTo(AX + 4, AY - 27.2); c.quadraticCurveTo(AX, AY - 30.2, AX - 4, AY - 27.2);
+      c.closePath(); c.fill();
+      c.fillStyle = '#c9302c'; c.fillRect(AX - 14, AY - 24, 28, 2);
     });
 
     at(S.XBORDER, (c) => {

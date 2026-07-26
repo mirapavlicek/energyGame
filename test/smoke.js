@@ -2042,7 +2042,7 @@ const server = http.createServer((req, res) => {
   });
   console.log('panel rozvodny:', JSON.stringify(subPanel));
   if (!subPanel.visible || !subPanel.title.includes('Rozvodna')) throw new Error('panel rozvodny se neotevřel: ' + subPanel.title);
-  if (subPanel.nBuyBtns !== 16) throw new Error('má být 10 typů traf (vč. HVDC a DC měnírny) + 6 propojovacích polí, je ' + subPanel.nBuyBtns);
+  if (subPanel.nBuyBtns !== 17) throw new Error('má být 11 typů traf (vč. HVDC a dvou DC měníren) + 6 propojovacích polí, je ' + subPanel.nBuyBtns);
   if (subPanel.bought !== 1) throw new Error('nákup trafa přes UI nefunguje');
   if (!subPanel.levels.includes('110')) throw new Error('trafo nepřidalo 110kV přípojnici: ' + subPanel.levels);
   await page.waitForTimeout(250);
@@ -2172,7 +2172,7 @@ const server = http.createServer((req, res) => {
   if (!delLine.removed || delLine.nAfter !== delLine.nBefore - 1) throw new Error('klik nástrojem X vedení neodstranil');
   if (!(delLine.refund > 0)) throw new Error('za odstraněné vedení není vratka: ' + delLine.refund);
 
-  // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 9 úrovní,
+  // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 10 úrovní,
   //     různé max. délky přímo v popiscích ---
   const linebar = await page.evaluate(() => {
     const disp = () => getComputedStyle(document.querySelector('#linebar')).display;
@@ -2193,7 +2193,7 @@ const server = http.createServer((req, res) => {
   });
   console.log('paleta napětí:', JSON.stringify(linebar));
   if (!linebar.hiddenInPan || !linebar.visibleInLine || !linebar.hiddenAgain) throw new Error('paleta napětí se špatně schovává/ukazuje');
-  if (linebar.nLevels !== 9) throw new Error('má být 9 napěťových úrovní (vč. HVDC a DC 500 V), je ' + linebar.nLevels);
+  if (linebar.nLevels !== 10) throw new Error('má být 10 napěťových úrovní (vč. HVDC a dvou DC), je ' + linebar.nLevels);
   if (!linebar.maxLensDiffer) throw new Error('každá úroveň má mít vlastní max. délku v popisku: ' + JSON.stringify(linebar.maxLens));
 
   // --- max. délky se u úrovní liší a vynucují se ---
@@ -2217,7 +2217,7 @@ const server = http.createServer((req, res) => {
     return { lens, unique: new Set(lens).size, far22Null: far22 === null, ok400: !!ok400 };
   });
   console.log('max. délky:', JSON.stringify(maxLen));
-  if (maxLen.unique !== 9) throw new Error('úrovně nemají rozdílné max. délky: ' + JSON.stringify(maxLen.lens));
+  if (maxLen.unique !== 10) throw new Error('úrovně nemají rozdílné max. délky: ' + JSON.stringify(maxLen.lens));
   if (!maxLen.far22Null) throw new Error('22 kV vedení delší než 14 dlaždic prošlo');
   if (!maxLen.ok400) throw new Error('400 kV vedení na stejnou vzdálenost neprošlo');
 
@@ -2572,6 +2572,115 @@ const server = http.createServer((req, res) => {
   }
   if (!(bess.cityHeld > 0.5)) throw new Error('úložiště nedrží město při výpadku: ' + bess.cityHeld);
   if (!bess.dcNoReactive) throw new Error('DC přípojnice je penalizovaná za jalový výkon');
+
+  // --- Tesla Power Grid: bateriová farma na ploše 10×10 s DC 1500 V ---
+  const mega = await page.evaluate(() => {
+    const map = EG.generateMap(226, 1234);
+    const sim = new EG.Sim(map);
+    sim.money = 10000000;
+    const sd = EG.STORAGE.tesla;
+    const dcLevel = EG.GEN_LEVEL.tesla;
+    const LT = EG.LINE_TYPES[dcLevel];
+
+    // najít místo, kde se vejde celý areál 10×10
+    let spot = null, tooSmallRejected = false;
+    for (let y = 12; y < map.size - 12 && !spot; y++) for (let x = 12; x < map.size - 12; x++) {
+      if (sim.canPlace('tesla', x, y).ok) { spot = [x, y]; break; }
+    }
+    // na vodě to nesmí jít ani jednou dlaždicí
+    for (let y = 0; y < map.size && !tooSmallRejected; y++) for (let x = 0; x < map.size; x++) {
+      if (map.type[map.idx(x, y)] === EG.T.WATER) {
+        tooSmallRejected = !sim.canPlace('tesla', x, y).ok;
+        break;
+      }
+    }
+    const farm = sim.place('tesla', spot[0], spot[1]);
+    const f = sim.footprintOf(farm);
+    const tiles = (f.x1 - f.x0 + 1) * (f.y1 - f.y0 + 1);
+
+    // celá plocha je obsazená: stavba se najde i v rohu, jinam nic nejde
+    const foundAtCorner = sim.buildingAt(f.x0, f.y0) === farm &&
+      sim.buildingAt(f.x1, f.y1) === farm && sim.buildingAt(f.x1, f.y0) === farm;
+    const insideBlocked = !sim.canPlace('sub', f.x0 + 3, f.y0 + 3).ok;
+    const overlapBlocked = !sim.canPlace('tesla', spot[0] + 4, spot[1]).ok;
+    const outsideFree = sim.buildingAt(f.x1 + 1, f.y1 + 1) === null;
+
+    // rozvodna hned u hrany areálu (DC přípojnice zvládne 6 dlaždic)
+    let sub = null;
+    for (let r = 5; r <= 7 && !sub; r++)
+      for (let dy = -r; dy <= r && !sub; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.hypot(dx, dy) > LT.maxLen) continue;
+        if (sim.canPlace('sub', farm.x + dx, farm.y + dy).ok) { sub = sim.place('sub', farm.x + dx, farm.y + dy); break; }
+      }
+    // bez měnírny 400/1,5 se farma nepřipojí
+    const withoutConverter = sim.connect(farm, sub, dcLevel);
+    sim.buyTrafo(sub, 'tdc15');
+    const dcLine = sim.connect(farm, sub, dcLevel);
+    // DC přívod musí unést plný výkon farmy
+    const feedCoversFullPower = LT.cap >= sd.maxP * EG.levelMult(1);
+
+    // cesta do sítě: 400 kV z farmy dolů na 22 kV k městu (a 220 kV pro uhelnou);
+    // tolik traf i vývodů se vejde jen do modernizované rozvodny
+    sim.upgrade(sub); sim.upgrade(sub);
+    sim.buyTrafo(sub, 't400_220'); sim.buyTrafo(sub, 't400_110');
+    sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+    let coal = null;
+    for (let r = 1; r <= 10 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.connect(coal, sub, 220);
+
+    // nabíjení z přebytku uhelné
+    for (let i = 0; i < 40; i++) sim.tick(0.1);
+    const charging = farm.storMode;
+    const chargedSome = farm.charge > 5;
+
+    /* vybíjení plným výkonem: v komponentě musí vzniknout velký deficit.
+       Polohu farmy určuje volná plocha 10×10, ne blízkost měst, takže se
+       velké město pro účel testu přesune do dosahu rozvodny. */
+    const city = map.cities[0];
+    const away = Math.sign(sub.x - farm.x) || 1;
+    city.x = sub.x + away; city.y = sub.y;
+    city.pop = 600;
+    farm.charge = sd.cap;
+    coal.mothball = true;
+    let peakOut = 0;
+    for (let i = 0; i < 20; i++) { sim.tick(0.05); peakOut = Math.max(peakOut, farm.out); }
+    const megaDemand = sim.stats.demand;
+
+    // demolice kliknutím kdekoli v areálu odstraní celou farmu
+    const nBefore = sim.buildings.length;
+    sim.demolish(f.x0 + 2, f.y0 + 7);
+    const demolishedFromCorner = sim.buildings.length === nBefore - 1 &&
+      sim.buildings.indexOf(farm) === -1;
+
+    return {
+      spot, tiles, size: f.s, cost: EG.BUILD.tesla.cost,
+      cap: sd.cap, maxP: sd.maxP, eff: sd.eff,
+      capVsH2: +(sd.cap / EG.STORAGE.h2.cap).toFixed(1),
+      dcLevel, dcCap: LT.cap, dcMaxLen: LT.maxLen,
+      tooSmallRejected, foundAtCorner, insideBlocked, overlapBlocked, outsideFree,
+      withoutConverterNull: withoutConverter === null, dcLineOk: !!dcLine,
+      dcLineLen: dcLine ? +dcLine.len.toFixed(1) : null,
+      feedCoversFullPower, charging, chargedSome,
+      peakOut: +peakOut.toFixed(1), megaDemand: +megaDemand.toFixed(0), demolishedFromCorner,
+    };
+  });
+  console.log('Tesla Power Grid:', JSON.stringify(mega));
+  if (mega.size !== 10 || mega.tiles !== 100) throw new Error('areál nemá 10×10 dlaždic: ' + mega.size + '/' + mega.tiles);
+  if (mega.capVsH2 !== 15) throw new Error('kapacita nemá být 15× vodík, je ' + mega.capVsH2 + '×');
+  if (mega.cost !== 30000) throw new Error('cena má být 30 000, je ' + mega.cost);
+  if (!mega.tooSmallRejected) throw new Error('areál jde postavit i na vodě');
+  if (!mega.foundAtCorner) throw new Error('stavba se nenajde v rozích svého areálu');
+  if (!mega.insideBlocked) throw new Error('do areálu jde postavit jiná stavba');
+  if (!mega.overlapBlocked) throw new Error('dva areály se mohou překrývat');
+  if (!mega.outsideFree) throw new Error('areál blokuje i dlaždice mimo sebe');
+  if (!mega.withoutConverterNull) throw new Error('farma se připojila bez měnírny 400/1,5');
+  if (!mega.dcLineOk) throw new Error('DC 1500 V po nákupu měnírny neprošlo');
+  if (!mega.feedCoversFullPower) throw new Error('DC přívod neunese plný výkon: ' + mega.dcCap + ' < ' + mega.maxP);
+  if (mega.charging !== 'nabíjí' || !mega.chargedSome) throw new Error('farma se nenabíjí z přebytků');
+  if (!(mega.peakOut > mega.maxP * 0.9)) throw new Error('farma nedodá plný výkon: ' + mega.peakOut + ' z ' + mega.maxP);
+  if (!mega.demolishedFromCorner) throw new Error('demolice kliknutím v areálu farmu neodstranila');
 
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {
