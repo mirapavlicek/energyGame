@@ -30,11 +30,6 @@ Všech 74 položek je implementováno (✅), byť některé ve zjednodušené po
     palivová logistika.
 12. ✅ Odstavení a konzervace – – elektrárnu lze dočasně odstavit (neplatí
     provoz, neopotřebovává se, ale nevyrábí a najíždí se s prodlevou).
-72. ✅ Realistický vítr – rychlost v m/s z Weibullova rozdělení (k = 2) a
-    skutečná výkonová křivka turbíny: rozběhová rychlost 3,5 m/s, P ~ v³ do
-    jmenovitých 12 m/s, vypínací 25 m/s s hysterezí. Drsnost terénu mění
-    místní rychlost, roční využití ~31 %, turbíny 14 % času stojí. Přidána
-    událost bezvětří (tlaková výše), kdy se zastaví všechny.
 73. ✅ Velké bateriové úložiště na stejnosměrné přípojnici – 700 MW·s,
     ±140 MW, účinnost 94 %; napojuje se přímo na DC 500 V a do střídavé
     sítě přes měnírnu 22 kV/500 V DC. Nízké napětí = obrovské proudy,
@@ -82,6 +77,11 @@ Všech 74 položek je implementováno (✅), byť některé ve zjednodušené po
     soláru, hráč se může připravit.
 31. ✅ Kůrovcová kalamita – – lesy se mění na louky, mění se větrný bonus
     a možnosti pily.
+72. ✅ Realistický vítr – rychlost v m/s z Weibullova rozdělení (k = 2) a
+    skutečná výkonová křivka turbíny: rozběhová rychlost 3,5 m/s, P ~ v³ do
+    jmenovitých 12 m/s, vypínací 25 m/s s hysterezí. Drsnost terénu mění
+    místní rychlost, roční využití ~31 %, turbíny 14 % času stojí. Přidána
+    událost bezvětří (tlaková výše), kdy se zastaví všechny.
 
 ## Ekonomika a obchod
 
