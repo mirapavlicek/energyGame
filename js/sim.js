@@ -30,7 +30,8 @@
     },
     wind: {
       name: 'Větrná turbína', cost: 130, upkeep: 1,
-      desc: 'Na kopcích nejvíc. Až 30 MW, kolísá s větrem.',
+      desc: 'Na kopcích nejvíc (30 MW). Pod 3,5 m/s stojí, plný výkon až od 12 m/s, ' +
+        'nad 25 m/s se odstaví. Rozmarný zdroj – bez zásobníku se na něj nedá spolehnout.',
       hotkey: '5',
     },
     sub: {
@@ -47,6 +48,12 @@
       name: 'Zásobník energie', cost: 260, upkeep: 1.5,
       desc: 'Bateriové úložiště 80 MWs: nabíjí se z přebytků, vybíjí při deficitu (účinnost 90 %). Připojení 22 kV.',
       hotkey: '9',
+    },
+    bess: {
+      name: 'Velké bateriové úložiště', cost: 1150, upkeep: 4,
+      desc: 'Kontejnerová baterie 700 MW·s, ±140 MW, účinnost 94 % – zaskočí za bezvětří. ' +
+        'Články pracují stejnosměrně, proto se napojuje přímo na přípojnici DC 500 V; ' +
+        'do střídavé sítě ji převede měnírna 22 kV/500 V DC v rozvodně.',
     },
     nuclear: {
       name: 'Jaderná elektrárna', cost: 2600, upkeep: 30,
@@ -71,7 +78,8 @@
     },
     owind: {
       name: 'Větrník na vodě', cost: 260, upkeep: 2,
-      desc: 'Jen na jezeře. Stabilnější a silnější vítr než na pevnině (22 kV).',
+      desc: 'Jen na jezeře, 34 MW. Nad hladinou fouká silněji a vytrvaleji než na pevnině, ' +
+        'takže vyrobí přibližně dvojnásobek (22 kV).',
     },
     h2: {
       name: 'Vodíkové úložiště', cost: 900, upkeep: 3,
@@ -88,19 +96,25 @@
     },
   };
 
-  /* Napěťové úrovně vedení: VVN (800/400/220/110 kV), VN (22/11 kV), NN (400 V).
+  /* Napěťové úrovně vedení: VVN (800/400/220/110 kV), VN (22/11 kV), NN (400 V)
+     a dvě stejnosměrné – HVDC 500 kV na dálkový přenos a DC 500 V jako
+     přípojnice bateriových úložišť.
      Vyšší napětí = větší kapacita, delší trasy a menší ztráty, ale dražší dlaždice.
      `loss` je podíl ztrát na dlaždici délky při plném zatížení; skutečná ztráta
-     roste kvadraticky s tokem (I²R): P_ztr = |P|·(|P|/cap)·loss·délka. */
-  const LEVELS = [800, 500, 400, 220, 110, 22, 11, 0.4];
+     roste kvadraticky s tokem (I²R): P_ztr = |P|·(|P|/cap)·loss·délka.
+     `dc` = stejnosměrná hladina: nemá jalový výkon, takže ji netrápí
+     kompenzace, ale u 500 V znamená nízké napětí obrovské proudy –
+     proto jen pár dlaždic a vysoké ztráty. */
+  const LEVELS = [800, 500, 400, 220, 110, 22, 11, 0.5, 0.4];
   const LINE_TYPES = {
-    500: { name: 'HVDC 500 kV', cls: 'HVDC', cap: 500, cost: 28, maxLen: 200, loss: 0.0006 },
+    500: { name: 'HVDC 500 kV', cls: 'HVDC', cap: 500, cost: 28, maxLen: 200, loss: 0.0006, dc: true },
     800: { name: 'VVN 800 kV', cls: 'VVN', cap: 800, cost: 34, maxLen: 60, loss: 0.0016 },
     400: { name: 'VVN 400 kV', cls: 'VVN', cap: 400, cost: 20, maxLen: 48, loss: 0.0020 },
     220: { name: 'VVN 220 kV', cls: 'VVN', cap: 200, cost: 11, maxLen: 36, loss: 0.0026 },
     110: { name: 'VVN 110 kV', cls: 'VVN', cap: 80,  cost: 6,  maxLen: 28, loss: 0.0034 },
     22:  { name: 'VN 22 kV',   cls: 'VN',  cap: 30,  cost: 3,  maxLen: 14, loss: 0.0060 },
     11:  { name: 'VN 11 kV',   cls: 'VN',  cap: 14,  cost: 2,  maxLen: 10, loss: 0.0080 },
+    0.5: { name: 'DC 500 V',   cls: 'DC',  cap: 150, cost: 4,  maxLen: 3,  loss: 0.0110, dc: true },
     0.4: { name: 'NN 400 V',   cls: 'NN',  cap: 5,   cost: 1,  maxLen: 5,  loss: 0.0120 },
   };
 
@@ -108,6 +122,7 @@
   const GEN_LEVEL = {
     dam: 400, coal: 220, hydro: 110, solar: 22, wind: 22, psh: 110, battery: 22, xborder: 400,
     nuclear: 800, gas: 110, geo: 22, bio: 22, waste: 22, owind: 22, h2: 110,
+    bess: 0.5, // baterie jsou stejnosměrné – vyvedené na DC přípojnici
   };
 
   /* pořadí nasazování zdrojů (merit order): levné jedou první.
@@ -138,8 +153,36 @@
   const STORAGE = {
     psh: { cap: 300, maxP: 70, eff: 0.75 },
     battery: { cap: 80, maxP: 25, eff: 0.90 },
+    bess: { cap: 700, maxP: 140, eff: 0.94 }, // kontejnerová baterie na DC přípojnici
     h2: { cap: 1200, maxP: 40, eff: 0.45 }, // vodík: obří, ale ztrátový (sezónní)
   };
+
+  /* --- Vítr: rychlost v m/s a výkonová křivka turbíny ---
+     Rychlost se bere z Weibullova rozdělení (k = 2, tzn. Rayleigh), jak je
+     u větru zvykem: slabý vítr je běžný, silný vzácný a bezvětří přijde samo.
+     Turbína se pod rozběhovou rychlostí vůbec neroztočí, mezi rozběhovou
+     a jmenovitou roste výkon s třetí mocninou rychlosti (P ~ v³), nad
+     jmenovitou drží štítkový výkon a nad vypínací se bezpečnostně odstaví.
+     Proto je vítr rozmarný zdroj – celoroční využití bývá jen 30–40 %. */
+  const WIND = {
+    cutIn: 3.5,     // m/s – pod tím rotor stojí
+    rated: 12,      // m/s – od této rychlosti štítkový výkon
+    cutOut: 25,     // m/s – bouřkové odstavení
+    restart: 18,    // m/s – hystereze: po odstavení se rozjede až pod touto rychlostí
+    scale: 9.5,     // Weibullovo c na pevnině ve výšce rotoru (střední ~8,4 m/s)
+    seaScale: 12.8, // nad vodou fouká silněji, a tím i vytrvaleji
+    /* drsnost terénu: kopce zvedají rychlost, les ji láme */
+    rough: { hill: 1.26, mountain: 1.32, forest: 0.76 },
+  };
+
+  /* podíl štítkového výkonu při dané rychlosti větru */
+  function windCurve(v) {
+    if (!(v > 0) || v < WIND.cutIn || v >= WIND.cutOut) return 0;
+    if (v >= WIND.rated) return 1;
+    const c3 = WIND.cutIn * WIND.cutIn * WIND.cutIn;
+    const r3 = WIND.rated * WIND.rated * WIND.rated;
+    return (v * v * v - c3) / (r3 - c3);
+  }
 
   /* regulační trafo (přepínač odboček): násobí „vodivost" trafa v power flow */
   const TRAFO_REG = { auto: 1, boost: 3, limit: 0.25 };
@@ -152,6 +195,7 @@
      dané hladiny, aby šla trasa prodloužit dalším vedením. */
   const TRAFOS = {
     thvdc: { hi: 500, lo: 400, cap: 500, cost: 800, name: 'HVDC měnírna 500/400' },
+    tdc05: { hi: 22, lo: 0.5, cap: 160, cost: 260, name: 'měnírna 22 kV/500 V DC' },
     t800_400: { hi: 800, lo: 400, cap: 600, cost: 700, name: '800⇄400 kV' },
     t400_220: { hi: 400, lo: 220, cap: 350, cost: 420, name: '400⇄220 kV' },
     t400_110: { hi: 400, lo: 110, cap: 250, cost: 380, name: '400⇄110 kV' },
@@ -188,7 +232,7 @@
   const WEAR = {
     hydro: 0.0011, dam: 0.0006, coal: 0.0018, solar: 0.0008, wind: 0.0014, sub: 0.0007,
     psh: 0.0008, battery: 0.0012, nuclear: 0.0007, gas: 0.0015, geo: 0.0006, bio: 0.0012,
-    waste: 0.0014, owind: 0.0016, h2: 0.0010,
+    waste: 0.0014, owind: 0.0016, h2: 0.0010, bess: 0.0011,
   };
 
   const SEASONS = ['jaro', 'léto', 'podzim', 'zima'];
@@ -277,6 +321,7 @@
         return { ok: true };
       case 'sub':
       case 'battery':
+      case 'bess':
       case 'gas':
       case 'waste':
       case 'h2':
@@ -773,6 +818,20 @@
     return true;
   };
 
+  /* Místní rychlost větru na dané stavbě: referenční rychlost × drsnost
+     terénu. Nad vodou platí vlastní (vyšší) referenční rychlost. */
+  Sim.prototype.windAt = function (b) {
+    const base = b.kind === 'owind' ? this.windSeaSpeed : this.windSpeed;
+    if (!(base > 0)) return 0;
+    const TT = T();
+    const t = this.map.type[this.map.idx(b.x, b.y)];
+    let k = 1;
+    if (t === TT.HILL) k = WIND.rough.hill;
+    else if (t === TT.MOUNTAIN) k = WIND.rough.mountain;
+    else if (t === TT.FOREST) k = WIND.rough.forest;
+    return base * k;
+  };
+
   /* okamžitý výkon elektrárny (bez vlivu stavu a modernizace) */
   Sim.prototype._baseGenOf = function (b, sun, wind) {
     const m = this.map;
@@ -804,15 +863,11 @@
         const s = Math.pow(sun, 1 / (1 + 0.15 * (b.level - 1)));
         return 35 * s * fx.solar;
       }
-      case 'wind': {
-        const TT = T();
-        const t = m.type[m.idx(b.x, b.y)];
-        const bonus = (t === TT.HILL || t === TT.MOUNTAIN) ? 1.35 : 1;
-        return Math.max(0, 30 * wind * bonus);
-      }
+      case 'wind':
       case 'owind': {
-        // na vodě fouká stabilněji a víc
-        return Math.max(0, 30 * (0.55 + 0.45 * wind) * 1.15);
+        if (b.wcut) return 0; // odstaveno bouřkovým větrem
+        const rated = b.kind === 'owind' ? 34 : 30;
+        return rated * windCurve(b.windSpeed !== undefined ? b.windSpeed : this.windAt(b));
       }
       default: return 0;
     }
@@ -1079,6 +1134,12 @@
         this.msg('🌱 DOTAČNÍ PROGRAM: solár a vítr se staví o 30 % levněji (po jednu sezónu)!');
         return e;
       }
+      case 'calm': {
+        const e = { type, start: now, until: now + (opts.dur || 20 + 40 * h(13)) };
+        this.events.push(e);
+        this.msg('🌫 BEZVĚTŘÍ: tlaková výše zastavila větrníky. Zaskočí zásobníky a řiditelné zdroje.', 'warn');
+        return e;
+      }
     }
     return null;
   };
@@ -1193,6 +1254,9 @@
         }
         if (roll(6) < 0.05) this.triggerEvent('beetle');
         if (roll(7) < 0.08 && this.activeEvents('subsidy').length === 0) this.triggerEvent('subsidy');
+        // bezvětří: nejčastěji za zimní tlakové výše (kdy je zátěž nejvyšší)
+        if (roll(8) < (season === 'zima' ? 0.24 : season === 'léto' ? 0.18 : 0.12) &&
+            this.activeEvents('calm').length === 0) this.triggerEvent('calm');
       }
       this.events = this.events.filter((e) => e.until === undefined || e.until > this.time - 60);
     }
@@ -1230,9 +1294,49 @@
     let sun = dh <= this.seasonFx.daylight / 2
       ? Math.cos(Math.PI * dh / this.seasonFx.daylight) : 0;
     if (this.activeEvents('eclipse').length > 0) sun = 0;
-    const wind = Math.max(0, Math.min(1.6,
-      (0.35 + 0.65 * EG.rng.fbm(this.time * 0.01 + this._noiseT, 3.7, 42, 3)) * this.seasonFx.wind));
+
+    /* --- vítr: rychlost v m/s ---
+       Kvantil `u` skládá povětrnostní situaci ze tří časových škál (fronty
+       během dne, tlakové útvary na několik dní a pomalý sezónní drift)
+       a přidá krátké nárazy. Roztažení kolem střední hodnoty zajistí, že
+       jsou dosažitelné oba extrémy – bezvětří i vichřice.
+       Inverzní Weibullova distribuční funkce v = c·√(−ln(1−u)) pak dá
+       rychlost s rozdělením, jaké vítr opravdu má (k = 2). */
+    const tw = this.time + this._noiseT;
+    const ws = this.map.seed;
+    const synop = 0.5 * EG.rng.valueNoise(tw * 0.009, 11.5, ws + 91) +
+                  0.3 * EG.rng.valueNoise(tw * 0.0032, 47.5, ws + 113) +
+                  0.2 * EG.rng.valueNoise(tw * 0.0011, 71.5, ws + 151);
+    const gust = EG.rng.fbm(tw * 0.12, 3.1, ws + 37, 2) - 0.5;
+    let u = 0.5 + (synop - 0.5) * 2.6 + gust * 0.22;
+    // bezvětří (tlaková výše): kvantil se stlačí k nule, turbíny se zastaví
+    const calms = this.activeEvents('calm');
+    if (calms.length > 0) u = Math.min(u, 0.02 + 0.05 * (synop * 0.5 + 0.5));
+    u = Math.min(0.9995, Math.max(0.0005, u));
+    const wq = Math.sqrt(-Math.log(1 - u)) * this.seasonFx.wind;
+    this.windSpeed = WIND.scale * wq;        // referenční rychlost na pevnině
+    this.windSeaSpeed = WIND.seaScale * wq;  // nad volnou hladinou
+    // `wind` zůstává normalizovaný podíl výkonu (0–1) pro HUD a animaci rotorů
+    const wind = windCurve(this.windSpeed);
     this.sun = sun; this.wind = wind; this.dayPhase = dayPhase;
+    this.calmActive = calms.length > 0;
+
+    /* bezpečnostní odstavení turbín při bouřkovém větru – s hysterezí,
+       aby turbína neskákala mezi stavy na hraně vypínací rychlosti */
+    for (const b of this.buildings) {
+      if (b.kind !== 'wind' && b.kind !== 'owind') continue;
+      const v = this.windAt(b);
+      b.windSpeed = v;
+      if (v >= WIND.cutOut) {
+        if (!b.wcut) {
+          this.msg('🌪 ' + BUILD[b.kind].name + ' [' + b.x + ',' + b.y + '] se při ' +
+            v.toFixed(0) + ' m/s bezpečnostně odstavila.', 'warn', b);
+        }
+        b.wcut = true;
+      } else if (b.wcut && v < WIND.restart) {
+        b.wcut = false;
+      }
+    }
 
     // --- sestavit přípojnice: bus = (stavba, napěťová úroveň) ---
     // Elektrárna má jednu přípojnici (výstupní napětí). Rozvodna má NN
@@ -1307,7 +1411,7 @@
         }
       }
       if (l.trippedUntil && l.trippedUntil > this.time) continue;
-      if (!l.cable && l.level !== 500 && l.len > LINE_TYPES[l.level].maxLen * 0.6) {
+      if (!l.cable && !LINE_TYPES[l.level].dc && l.len > LINE_TYPES[l.level].maxLen * 0.6) {
         const aC = nodes[ai], bC = nodes[bi];
         const compensated = (aC.kind === 'sub' && aC.compensator) || (bC.kind === 'sub' && bC.compensator);
         if (!compensated) l.effCap = l.cap * 0.8;
@@ -2066,4 +2170,6 @@
   EG.SUB_RANGE = SUB_RANGE;
   EG.MAX_LEVEL = MAX_LEVEL;
   EG.MAX_RANGE_LEVEL = MAX_RANGE_LEVEL;
+  EG.WIND = WIND;
+  EG.windCurve = windCurve;
 })();

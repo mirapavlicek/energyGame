@@ -14,7 +14,7 @@
     HOUSE: 8, HOUSE2: 9, CENTER: 10, HYDRO: 11, DAM: 12, COAL: 13, SOLAR: 14, WIND: 15,
     SUBST: 16, SEL: 17, BAD: 18, CITYRING: 19, FACTORY: 20, PSH: 21, BATT: 22, XBORDER: 23,
     STAR: 24, PIP: 25, NUKE: 26, GASP: 27, GEOTH: 28, BIOG: 29, WASTE: 30, OWIND: 31,
-    H2: 32, GEOFIELD: 33, WIND2: 34, OWIND2: 35, TRACT: 36,
+    H2: 32, GEOFIELD: 33, WIND2: 34, OWIND2: 35, TRACT: 36, BESS: 37,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -283,6 +283,30 @@
       c.beginPath();
       c.moveTo(AX + 1, AY - 30); c.lineTo(AX - 4, AY - 21); c.lineTo(AX - 1, AY - 21);
       c.lineTo(AX - 3, AY - 13); c.lineTo(AX + 4, AY - 23); c.lineTo(AX + 1, AY - 23);
+      c.closePath(); c.fill();
+    });
+
+    at(S.BESS, (c) => {
+      // velké úložiště: řada bateriových kontejnerů, DC přípojnice a měnírna
+      tile(c, '#a8a49a', '#bcb8ae', '#8a867c');
+      for (let i = 0; i < 3; i++) {
+        const dx = -9 + i * 9, dy = 5 - i * 5;
+        c.save(); c.translate(dx, dy);
+        box(c, 9, 4, 9, '#2f6f8f', '#8ecbe4', '#5aa3c4');
+        c.fillStyle = '#1d4d64';
+        for (let q = 0; q < 3; q++) c.fillRect(AX - 6 + q * 5, AY - 11, 3, 5);
+        c.restore();
+      }
+      // stejnosměrná přípojnice mezi kontejnery a měnírnou
+      c.strokeStyle = '#e0873c'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(AX - 14, AY - 4); c.lineTo(AX + 12, AY - 17); c.stroke();
+      // měnírna (střídač) s označením =/~
+      box(c, 6, 3, 11, '#6c737c', '#c9ced5', '#a2a8b0', -14);
+      c.fillStyle = '#ffe14d';
+      c.fillRect(AX - 3, AY - 30, 6, 1.6);
+      c.beginPath();
+      c.moveTo(AX - 3, AY - 26); c.quadraticCurveTo(AX, AY - 29, AX + 3, AY - 26);
+      c.lineTo(AX + 3, AY - 24.5); c.quadraticCurveTo(AX, AY - 27.5, AX - 3, AY - 24.5);
       c.closePath(); c.fill();
     });
 

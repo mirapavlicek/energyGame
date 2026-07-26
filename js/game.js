@@ -25,6 +25,7 @@
     110: [0.62, 0.66, 0.72],
     22:  [0.42, 0.85, 0.45],
     11:  [0.72, 0.90, 0.45],
+    0.5: [1.00, 0.55, 0.30], // DC přípojnice baterií
     0.4: [0.95, 0.95, 0.88],
   };
   let hover = [0, 0];
@@ -40,12 +41,27 @@
 
   const $ = (s) => document.querySelector(s);
 
+  /* Vítr v HUD: rychlost v m/s a co znamená pro turbíny. Rychlost je
+     důležitější než procenta – z ní je vidět, proč turbíny stojí. */
+  function windLabel() {
+    const W = EG.WIND;
+    const v = sim.windSpeed || 0;
+    let state;
+    if (sim.calmActive) state = 'bezvětří';
+    else if (v >= W.cutOut) state = 'odstaveno';
+    else if (v < W.cutIn) state = 'turbíny stojí';
+    else if (v >= W.rated) state = 'plný výkon';
+    else state = Math.round((sim.wind || 0) * 100) + ' %';
+    const bad = v < W.cutIn || v >= W.cutOut;
+    return '💨 <span class="' + (bad ? 'bad' : '') + '">' + v.toFixed(1) + ' m/s · ' + state + '</span>';
+  }
+
   function kindSprite(kind) {
     return {
       hydro: S.HYDRO, dam: S.DAM, coal: S.COAL, solar: S.SOLAR, wind: S.WIND,
       sub: S.SUBST, psh: S.PSH, battery: S.BATT, xborder: S.XBORDER,
       nuclear: S.NUKE, gas: S.GASP, geo: S.GEOTH, bio: S.BIOG, waste: S.WASTE,
-      owind: S.OWIND, h2: S.H2,
+      owind: S.OWIND, h2: S.H2, bess: S.BESS,
     }[kind];
   }
 
@@ -1285,10 +1301,19 @@
         rows += 'Slunce: <span class="val">' + Math.round((sim.sun || 0) * 100) + ' %</span>' +
           ' · sezóna <span class="val">' + seasonPct(fx.solar || 1) + '</span>' +
           ' <span class="dim">(' + (sim.seasonName || '') + ')</span><br>';
-      } else if (b.kind === 'wind') {
-        rows += 'Vítr: <span class="val">' + Math.round((sim.wind || 0) * 100) + ' %</span>' +
-          ' · sezóna <span class="val">' + seasonPct(fx.wind || 1) + '</span>' +
-          ' <span class="dim">(' + (sim.seasonName || '') + ')</span><br>';
+      } else if (b.kind === 'wind' || b.kind === 'owind') {
+        // u turbíny je rozhodující místní rychlost větru a poloha na křivce
+        const W = EG.WIND;
+        const v = b.windSpeed !== undefined ? b.windSpeed : sim.windAt(b);
+        let why;
+        if (b.wcut) why = '<span class="bad">bezpečnostní odstavení (nad ' + W.cutOut + ' m/s)</span>';
+        else if (v < W.cutIn) why = '<span class="bad">stojí – pod rozběhovou rychlostí ' + W.cutIn + ' m/s</span>';
+        else if (v >= W.rated) why = '<span class="val">plný výkon (od ' + W.rated + ' m/s)</span>';
+        else why = '<span class="val">' + Math.round(EG.windCurve(v) * 100) + ' % štítkového výkonu</span>';
+        rows += 'Vítr v místě: <span class="val">' + v.toFixed(1) + ' m/s</span> · ' + why + '<br>';
+        rows += 'Sezóna: <span class="val">' + seasonPct(fx.wind || 1) + '</span>' +
+          ' <span class="dim">(' + (sim.seasonName || '') + ')</span>' +
+          (sim.calmActive ? ' · <span class="bad">🌫 bezvětří</span>' : '') + '<br>';
       }
       const fd = EG.fuelDefOf(b);
       if (fd) {
@@ -1562,9 +1587,9 @@
     const ph = sim.dayPhase || 0;
     const hours = Math.floor(6 + ph * 24) % 24;
     const seasonIco = { 'jaro': '🌱', 'léto': '☀️', 'podzim': '🍂', 'zima': '❄️' }[sim.seasonName] || '';
-    $('#clock').textContent = 'den ' + (sim.day || 1) + ' · ' + seasonIco + (sim.seasonName || '') + ' · ' +
+    $('#clock').innerHTML = 'den ' + (sim.day || 1) + ' · ' + seasonIco + (sim.seasonName || '') + ' · ' +
       String(hours).padStart(2, '0') + ':00 ' +
-      (sim.sun > 0.05 ? '☀' + Math.round(sim.sun * 100) + '%' : '☾') + ' 💨' + Math.round(sim.wind * 100) + '%';
+      (sim.sun > 0.05 ? '☀' + Math.round(sim.sun * 100) + '%' : '☾') + ' ' + windLabel();
 
     if (sim.messages.length !== lastMsgCount) {
       lastMsgCount = sim.messages.length;
@@ -1659,12 +1684,17 @@
     for (const ind of map.industries || []) {
       spr.push([ind.x, ind.y, ind.type === 'trakce' ? S.TRACT : S.FACTORY, null, null, ind]);
     }
-    // animace rotorů: rychlost otáčení podle větru, stojící turbíny (bouřka) neanimují
-    const rotorFrame = Math.floor(performance.now() * 0.001 * (1.5 + sim.wind * 5)) % 2;
+    // animace rotorů: otáčky rostou s rychlostí větru; turbína bez výkonu
+    // (bezvětří, bouřkové odstavení, konzervace) stojí úplně
+    const t2 = performance.now() * 0.001;
     for (const b of sim.buildings) {
       let sId = kindSprite(b.kind);
-      if ((b.kind === 'wind' || b.kind === 'owind') && rotorFrame === 1 && b.gen > 0.5 && !b.mothball) {
-        sId = b.kind === 'wind' ? S.WIND2 : S.OWIND2;
+      if (b.kind === 'wind' || b.kind === 'owind') {
+        const v = b.windSpeed || 0;
+        const spinning = b.gen > 0.5 && !b.mothball && !b.wcut;
+        if (spinning && Math.floor(t2 * (0.8 + v * 0.42)) % 2 === 1) {
+          sId = b.kind === 'wind' ? S.WIND2 : S.OWIND2;
+        }
       }
       spr.push([b.x, b.y, sId, null, b]);
     }

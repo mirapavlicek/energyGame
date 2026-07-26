@@ -14,12 +14,33 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
 - **Přehrada** (také jen na řece) zaplaví údolí proti proudu, dá velký stabilní
   výkon a **posílí průtok** po proudu – vodní elektrárny níže pak vyrábí víc.
 - Dále: uhelná elektrárna (stabilní, drahý provoz), solární park (jen ve dne),
-  větrné turbíny (kolísají s větrem, na kopcích víc).
-- **Zásobníky energie**: **přečerpávací elektrárna** (jen na kopci do 3 dlaždic
-  od vody; 300 MWs, ±70 MW, účinnost 75 %, připojení 110 kV) a **bateriové
-  úložiště** (kdekoli na pevnině; 80 MWs, ±25 MW, účinnost 90 %, připojení
-  22 kV). Automaticky nabíjejí z přebytků své sítě a vybíjejí při deficitu –
-  ideální na solární poledne vs. večerní špičku.
+  větrné turbíny (rozmarné – viz níže).
+- **Vítr je nejrozmarnější zdroj v hře.** Rychlost větru se losuje
+  z Weibullova rozdělení (k = 2) přes tři časové škály povětrnostní situace
+  a turbína z ní vyrábí podle **skutečné výkonové křivky**: pod rozběhovou
+  rychlostí **3,5 m/s rotor stojí**, mezi rozběhovou a jmenovitou roste výkon
+  s **třetí mocninou rychlosti**, od **12 m/s** dává štítkový výkon a nad
+  **25 m/s se bezpečnostně odstaví** (a rozjede se až pod 18 m/s). Terén mění
+  místní rychlost – na kopcích fouká o 26 % víc, v lese o 24 % méně.
+  Výsledkem je roční využití jen **~31 %**: turbíny **14 % času úplně stojí**
+  a jen 10 % času jedou na plno. Navíc občas přijde **bezvětří** (tlaková
+  výše, nejčastěji v zimě), kdy se zastaví všechny. Aktuální rychlost i důvod,
+  proč turbína stojí, ukazuje HUD a panel turbíny. **Větrník na vodě** má nad
+  hladinou silnější a vytrvalejší vítr, takže vyrobí přibližně dvojnásobek.
+- **Zásobníky energie** – protože na vítr se spolehnout nedá:
+  **přečerpávací elektrárna** (jen na kopci do 3 dlaždic od vody; 300 MW·s,
+  ±70 MW, účinnost 75 %, připojení 110 kV), **bateriové úložiště** (kdekoli
+  na pevnině; 80 MW·s, ±25 MW, účinnost 90 %, 22 kV) a **velké bateriové
+  úložiště** (700 MW·s, ±140 MW, účinnost 94 %). Automaticky nabíjejí
+  z přebytků své sítě a vybíjejí při deficitu – ideální na solární poledne
+  vs. večerní špičku i na přečkání bezvětří.
+- **Velké úložiště jede na stejnosměrných 500 V**, jak to u bateriových
+  kontejnerů skutečně bývá: připojuje se přímo na přípojnici **DC 500 V**
+  a do střídavé sítě ho převede **měnírna 22 kV/500 V DC** v rozvodně.
+  Na střídavou hladinu ho napojit nelze. Nízké napětí znamená obrovské
+  proudy, takže DC vedení unese jen **3 dlaždice** a má vysoké ztráty –
+  úložiště patří hned k rozvodně. Zato stejnosměrná hladina nemá jalový
+  výkon, takže ji netrápí kompenzace.
 - **Regulační trafa**: k instalovanému trafu lze dokoupit přepínač odboček
   (50 % ceny trafa) a pak tok trafem řídit – **▲ přednostní tok** ho posílí,
   **▼ škrcení** ho omezí a přesměruje výkon na paralelní cesty.
@@ -45,17 +66,19 @@ Budovatelská strategie o stavbě energetické sítě. Běží čistě v prohlí
 
 ### Napěťové úrovně a trafa
 
-Vedení existuje v sedmi napěťových úrovních – liší se kapacitou, cenou za
+Vedení existuje v devíti napěťových úrovních – liší se kapacitou, cenou za
 dlaždici a maximální délkou:
 
 | Úroveň | Kapacita | Cena/dl | Max. délka | Ztráty/dl¹ |
 | --- | --- | --- | --- | --- |
 | VVN 800 kV | 800 MW | 34 | 60 | 0,16 % |
+| HVDC 500 kV | 500 MW | 28 | 200 | 0,06 % |
 | VVN 400 kV | 400 MW | 20 | 48 | 0,20 % |
 | VVN 220 kV | 200 MW | 11 | 36 | 0,26 % |
 | VVN 110 kV | 80 MW | 6 | 28 | 0,34 % |
 | VN 22 kV | 30 MW | 3 | 14 | 0,60 % |
 | VN 11 kV | 14 MW | 2 | 10 | 0,80 % |
+| DC 500 V | 150 MW | 4 | 3 | 1,10 % |
 | NN 400 V | 5 MW | 1 | 5 | 1,20 % |
 
 ¹ při plném zatížení; ztráta roste kvadraticky s tokem (I²R).
@@ -86,7 +109,10 @@ Města se napájí z NN strany rozvodny.
 
 **HVDC 500 kV**: stejnosměrná spojka pro extrémní vzdálenosti (až 200
 dlaždic, 500 MW, minimální ztráty) – na obou koncích potřebuje drahou
-**měnírnu** (HVDC 500/400). **Podzemní kabel** (přepínač v paletě vedení)
+**měnírnu** (HVDC 500/400). **DC 500 V** je naopak stejnosměrná přípojnice
+bateriových úložišť: jen 3 dlaždice, ale velká kapacita a bez jalového
+výkonu; do střídavé sítě ji propojí **měnírna 22 kV/500 V DC**.
+**Podzemní kabel** (přepínač v paletě vedení)
 stojí 2,5×, ale odolá bouřkám, má nižší ztráty a netrpí na jalový výkon.
 Dlouhá střídavá vedení (přes 60 % max. délky) bez **kompenzace jalového
 výkonu** v rozvodně ztrácí 20 % kapacity. Každá rozvodna má omezený počet

@@ -2042,7 +2042,7 @@ const server = http.createServer((req, res) => {
   });
   console.log('panel rozvodny:', JSON.stringify(subPanel));
   if (!subPanel.visible || !subPanel.title.includes('Rozvodna')) throw new Error('panel rozvodny se neotevřel: ' + subPanel.title);
-  if (subPanel.nBuyBtns !== 15) throw new Error('má být 9 typů traf (vč. HVDC měnírny) + 6 propojovacích polí, je ' + subPanel.nBuyBtns);
+  if (subPanel.nBuyBtns !== 16) throw new Error('má být 10 typů traf (vč. HVDC a DC měnírny) + 6 propojovacích polí, je ' + subPanel.nBuyBtns);
   if (subPanel.bought !== 1) throw new Error('nákup trafa přes UI nefunguje');
   if (!subPanel.levels.includes('110')) throw new Error('trafo nepřidalo 110kV přípojnici: ' + subPanel.levels);
   await page.waitForTimeout(250);
@@ -2172,7 +2172,7 @@ const server = http.createServer((req, res) => {
   if (!delLine.removed || delLine.nAfter !== delLine.nBefore - 1) throw new Error('klik nástrojem X vedení neodstranil');
   if (!(delLine.refund > 0)) throw new Error('za odstraněné vedení není vratka: ' + delLine.refund);
 
-  // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 7 úrovní,
+  // --- paleta napětí: skrytá v prohlížení, viditelná u nástroje vedení, 9 úrovní,
   //     různé max. délky přímo v popiscích ---
   const linebar = await page.evaluate(() => {
     const disp = () => getComputedStyle(document.querySelector('#linebar')).display;
@@ -2193,7 +2193,7 @@ const server = http.createServer((req, res) => {
   });
   console.log('paleta napětí:', JSON.stringify(linebar));
   if (!linebar.hiddenInPan || !linebar.visibleInLine || !linebar.hiddenAgain) throw new Error('paleta napětí se špatně schovává/ukazuje');
-  if (linebar.nLevels !== 8) throw new Error('má být 8 napěťových úrovní (vč. HVDC), je ' + linebar.nLevels);
+  if (linebar.nLevels !== 9) throw new Error('má být 9 napěťových úrovní (vč. HVDC a DC 500 V), je ' + linebar.nLevels);
   if (!linebar.maxLensDiffer) throw new Error('každá úroveň má mít vlastní max. délku v popisku: ' + JSON.stringify(linebar.maxLens));
 
   // --- max. délky se u úrovní liší a vynucují se ---
@@ -2217,7 +2217,7 @@ const server = http.createServer((req, res) => {
     return { lens, unique: new Set(lens).size, far22Null: far22 === null, ok400: !!ok400 };
   });
   console.log('max. délky:', JSON.stringify(maxLen));
-  if (maxLen.unique !== 8) throw new Error('úrovně nemají rozdílné max. délky: ' + JSON.stringify(maxLen.lens));
+  if (maxLen.unique !== 9) throw new Error('úrovně nemají rozdílné max. délky: ' + JSON.stringify(maxLen.lens));
   if (!maxLen.far22Null) throw new Error('22 kV vedení delší než 14 dlaždic prošlo');
   if (!maxLen.ok400) throw new Error('400 kV vedení na stejnou vzdálenost neprošlo');
 
@@ -2346,6 +2346,232 @@ const server = http.createServer((req, res) => {
   if (undoPlaced.n !== undoPrep.nBefore + 1) throw new Error('stavba rozvodny klikem nevyšla');
   if (undoDone.n !== undoPrep.nBefore) throw new Error('Ctrl+Z stavbu neodstranil');
   if (undoDone.money !== undoPrep.money) throw new Error('Ctrl+Z nevrátil peníze: ' + undoDone.money + ' vs ' + undoPrep.money);
+
+  // --- vítr jako rozmarný zdroj: výkonová křivka, bezvětří, odstavení ---
+  const windTest = await page.evaluate(() => {
+    const W = EG.WIND;
+    const curve = EG.windCurve;
+    // výkonová křivka: stojí pod rozběhem, roste, drží, nad vypínací nula
+    const shape = {
+      belowCutIn: curve(W.cutIn - 0.2),
+      justAbove: curve(W.cutIn + 0.3),
+      mid: curve((W.cutIn + W.rated) / 2),
+      atRated: curve(W.rated),
+      aboveRated: curve(W.rated + 5),
+      aboveCutOut: curve(W.cutOut + 1),
+    };
+    // roste monotónně mezi rozběhovou a jmenovitou rychlostí
+    let monotone = true;
+    for (let v = W.cutIn; v < W.rated - 0.1; v += 0.25) {
+      if (curve(v + 0.25) < curve(v)) { monotone = false; break; }
+    }
+
+    const map = EG.generateMap(160, 4242);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    // turbína na kopci (větrnější) a na rovině
+    let hill = null, flat = null;
+    for (let y = 0; y < map.size && !(hill && flat); y++) for (let x = 0; x < map.size; x++) {
+      const t = map.type[map.idx(x, y)];
+      if (!sim.canPlace('wind', x, y).ok) continue;
+      if (!hill && t === EG.T.HILL) hill = sim.place('wind', x, y);
+      else if (!flat && t === EG.T.GRASS) flat = sim.place('wind', x, y);
+      if (hill && flat) break;
+    }
+    sim.tick(0.1);
+    const hillWindier = sim.windAt(hill) > sim.windAt(flat);
+
+    /* dlouhodobý chod přes několik let: kolik času turbína stojí, jak často
+       jede na plno a jaké je využití. U větru se čeká vysoká variabilita,
+       ne stabilní pásmo – proto se měří i rozptyl rychlosti. */
+    let samples = 0, stopped = 0, full = 0, sumCurve = 0, minV = Infinity, maxV = -Infinity;
+    const yearLen = sim.dayLen * 12;
+    // servisní smlouva, aby výsledek nezkreslilo opotřebení za pět let
+    flat.contract = true; hill.contract = true;
+    for (let i = 0; i < 6000; i++) {
+      sim.tick(yearLen * 5 / 6000);
+      samples++;
+      const v = sim.windSpeed;
+      minV = Math.min(minV, v); maxV = Math.max(maxV, v);
+      const p = curve(sim.windAt(flat));
+      if (p === 0) stopped++;
+      if (p === 1) full++;
+      sumCurve += p;
+    }
+    const capFactor = sumCurve / samples;
+    const stoppedShare = stopped / samples;
+
+    // bezvětří: vyvolaná událost turbíny zastaví úplně
+    sim.triggerEvent('calm', { dur: 40 });
+    for (let i = 0; i < 20; i++) sim.tick(0.2);
+    const calmSpeed = sim.windSpeed;
+    const calmGen = hill.gen + flat.gen;
+    const calmFlagged = !!sim.calmActive;
+
+    // větrník na vodě má vyšší štítek i vyšší rychlost než na pevnině
+    sim.events = [];
+    let ow = null;
+    for (let y = 0; y < map.size && !ow; y++) for (let x = 0; x < map.size; x++) {
+      if (sim.canPlace('owind', x, y).ok) { ow = sim.place('owind', x, y); break; }
+    }
+    sim.tick(0.1);
+    const seaWindier = ow ? sim.windAt(ow) > sim.windAt(flat) : false;
+
+    /* bouřkový vítr: nad vypínací rychlostí se turbína odstaví a drží
+       odstávku (hystereze), dokud vítr nepoleví pod restartovací rychlost.
+       Rychlost se vnucuje přes windAt – tick si ji jinak přepočítá sám. */
+    const forceWind = (v) => { sim.windAt = () => v; };
+    flat.cond = 1; flat.broken = false; // ať výsledek neovlivní technický stav
+    forceWind(W.cutOut + 3);
+    sim.tick(0.05);
+    const cutOutStopped = flat.wcut === true && flat.gen === 0;
+    // vítr poleví jen mírně (mezi restartovací a vypínací) – stále stojí
+    forceWind((W.restart + W.cutOut) / 2);
+    sim.tick(0.05);
+    const hysteresisHolds = flat.wcut === true && flat.gen === 0;
+    // až pod restartovací rychlostí se rozjede
+    forceWind(W.rated);
+    sim.tick(0.05);
+    const restarted = flat.wcut === false && flat.gen > 20;
+
+    return {
+      shape, monotone, hillWindier, seaWindier, cutIn: W.cutIn,
+      capFactor: +capFactor.toFixed(3), stoppedShare: +stoppedShare.toFixed(3),
+      fullShare: +(full / samples).toFixed(3),
+      minV: +minV.toFixed(1), maxV: +maxV.toFixed(1),
+      calmSpeed: +calmSpeed.toFixed(2), calmGen: +calmGen.toFixed(2), calmFlagged,
+      cutOutStopped, hysteresisHolds, restarted,
+      cond: +flat.cond.toFixed(2), broken: !!flat.broken, genAfter: +flat.gen.toFixed(1),
+    };
+  });
+  console.log('vítr:', JSON.stringify(windTest));
+  if (windTest.shape.belowCutIn !== 0 || windTest.shape.aboveCutOut !== 0) {
+    throw new Error('turbína vyrábí mimo pracovní rozsah: ' + JSON.stringify(windTest.shape));
+  }
+  if (windTest.shape.atRated !== 1 || windTest.shape.aboveRated !== 1) throw new Error('nad jmenovitou rychlostí nedrží štítkový výkon');
+  if (!(windTest.shape.justAbove < 0.1)) throw new Error('těsně nad rozběhem má být výkon minimální (P~v³)');
+  if (!windTest.monotone) throw new Error('výkonová křivka není monotónní');
+  if (!windTest.hillWindier) throw new Error('na kopci nefouká víc než na rovině');
+  if (!windTest.seaWindier) throw new Error('nad vodou nefouká víc než na pevnině');
+  // rozmarnost: turbína musí občas stát úplně a jen zřídka jet na plno
+  if (!(windTest.stoppedShare > 0.05)) throw new Error('turbína nikdy nestojí – vítr je moc stabilní: ' + windTest.stoppedShare);
+  if (!(windTest.capFactor > 0.18 && windTest.capFactor < 0.55)) {
+    throw new Error('nereálné využití větru (má být ~0,2–0,5): ' + windTest.capFactor);
+  }
+  if (!(windTest.fullShare > 0.02)) throw new Error('turbína se nikdy nedostane na štítkový výkon: ' + windTest.fullShare);
+  if (!(windTest.minV < 2 && windTest.maxV > 20)) throw new Error('rychlost větru nemá realistický rozptyl: ' + windTest.minV + '–' + windTest.maxV);
+  if (!(windTest.calmGen === 0 && windTest.calmSpeed < windTest.cutIn)) throw new Error('bezvětří turbíny nezastavilo: ' + JSON.stringify(windTest));
+  if (!windTest.calmFlagged) throw new Error('bezvětří se nepropíše do stavu hry');
+  if (!windTest.cutOutStopped) throw new Error('bouřkový vítr turbínu neodstavil');
+  if (!windTest.hysteresisHolds) throw new Error('odstavená turbína se rozjela dřív, než vítr polevil (chybí hystereze)');
+  if (!windTest.restarted) throw new Error('turbína se po zklidnění větru nerozjela');
+
+  // --- velké bateriové úložiště na stejnosměrných 500 V ---
+  const bess = await page.evaluate(() => {
+    const map = EG.generateMap(160, 77);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const sd = EG.STORAGE.bess;
+    const dcLevel = EG.GEN_LEVEL.bess;
+
+    // rozvodna u města + kaskáda do NN
+    const c = map.cities[0];
+    let sub = null;
+    for (let r = 1; r <= 4 && !sub; r++)
+      for (let dy = -r; dy <= r && !sub; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+    sim.buyTrafo(sub, 't220_110'); sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't22_04');
+
+    // úložiště hned u rozvodny (DC přípojnice snese jen pár dlaždic)
+    let store = null;
+    for (let r = 1; r <= 3 && !store; r++)
+      for (let dy = -r; dy <= r && !store; dy++) for (let dx = -r; dx <= r; dx++) {
+        const d = Math.hypot(dx, dy);
+        if (d > EG.LINE_TYPES[dcLevel].maxLen) continue;
+        if (sim.canPlace('bess', sub.x + dx, sub.y + dy).ok) { store = sim.place('bess', sub.x + dx, sub.y + dy); break; }
+      }
+    // bez měnírny nemá rozvodna DC přípojnici -> spojení musí selhat
+    const withoutConverter = sim.connect(store, sub, dcLevel);
+    // ani na 22 kV se baterie připojit nedá (vyrábí stejnosměrně)
+    const onAc = sim.connect(store, sub, 22);
+    sim.buyTrafo(sub, 'tdc05');
+    const dcLine = sim.connect(store, sub, dcLevel);
+    // DC hladinu nelze táhnout na dálku (nízké napětí = obrovské proudy)
+    let far = null;
+    for (let r = EG.LINE_TYPES[dcLevel].maxLen + 2; r <= 8 && !far; r++)
+      for (let dy = -r; dy <= r && !far; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.hypot(dx, dy) <= EG.LINE_TYPES[dcLevel].maxLen + 1) continue;
+        if (sim.canPlace('bess', sub.x + dx, sub.y + dy).ok) { far = sim.place('bess', sub.x + dx, sub.y + dy); break; }
+      }
+    const farLine = far ? sim.connect(far, sub, dcLevel) : 'nenalezeno';
+
+    // uhelná jako zdroj přebytku
+    let coal = null;
+    for (let r = 1; r <= 8 && !coal; r++)
+      for (let dy = -r; dy <= r && !coal; dy++) for (let dx = -r; dx <= r; dx++)
+        if (sim.canPlace('coal', sub.x + dx, sub.y + dy).ok) { coal = sim.place('coal', sub.x + dx, sub.y + dy); break; }
+    sim.connect(coal, sub, 220);
+
+    // nabíjení z přebytku
+    for (let i = 0; i < 40; i++) sim.tick(0.1);
+    const charging = store.storMode;
+    const chargedSome = store.charge > 5;
+    // dobít až po strop a ověřit, že strop je opravdu velký
+    for (let i = 0; i < 4000 && store.charge < sd.cap - 1; i++) sim.tick(0.2);
+    const fullCharge = store.charge;
+
+    // deficit: uhelné dojde palivo -> baterie drží město
+    coal.fuel = 0; coal.mothball = true;
+    sim.tick(0.1);
+    const dischargeMode = store.storMode;
+    const chargeBefore = store.charge;
+    for (let i = 0; i < 30; i++) sim.tick(0.1);
+    const drained = store.charge < chargeBefore - 1;
+    const cityHeld = map.cities[0].powered;
+
+    /* velký deficit: úložiště musí dodat řádově víc než malý zásobník
+       (dispečink jinak vybíjí jen do výše chybějícího výkonu) */
+    store.charge = sd.cap;
+    map.cities[0].pop = 140;
+    let peakOut = 0;
+    for (let i = 0; i < 20; i++) { sim.tick(0.05); peakOut = Math.max(peakOut, store.out); }
+    const bigDeficitDemand = sim.stats.demand;
+
+    // stejnosměrná hladina nemá jalový výkon -> žádná penalizace kapacity
+    const dcNoReactive = dcLine ? (dcLine.effCap === dcLine.cap) : false;
+
+    return {
+      placed: !!store, dcLevel,
+      withoutConverterNull: withoutConverter === null,
+      onAcNull: onAc === null,
+      dcLineOk: !!dcLine,
+      farLineNull: farLine === null || farLine === 'nenalezeno',
+      cap: sd.cap, maxP: sd.maxP, eff: sd.eff, smallMaxP: EG.STORAGE.battery.maxP,
+      biggerThanSmall: sd.cap > EG.STORAGE.battery.cap * 4 && sd.maxP > EG.STORAGE.battery.maxP * 4,
+      charging, chargedSome, fullCharge: +fullCharge.toFixed(1),
+      dischargeMode, peakOut: +peakOut.toFixed(1), drained,
+      bigDeficitDemand: +bigDeficitDemand.toFixed(0),
+      cityHeld: +(cityHeld || 0).toFixed(2), dcNoReactive,
+      inObjList: EG.STORAGE.bess !== undefined,
+    };
+  });
+  console.log('velké úložiště (DC 500 V):', JSON.stringify(bess));
+  if (!bess.placed) throw new Error('velké úložiště nejde postavit');
+  if (bess.dcLevel !== 0.5) throw new Error('úložiště se nepřipojuje na 500 V DC: ' + bess.dcLevel);
+  if (!bess.withoutConverterNull) throw new Error('DC vedení prošlo i bez měnírny v rozvodně');
+  if (!bess.onAcNull) throw new Error('baterii šlo připojit přímo na střídavých 22 kV');
+  if (!bess.dcLineOk) throw new Error('DC vedení po nákupu měnírny neprošlo');
+  if (!bess.farLineNull) throw new Error('DC 500 V šlo natáhnout na velkou vzdálenost');
+  if (!bess.biggerThanSmall) throw new Error('velké úložiště není výrazně větší než malý zásobník');
+  if (bess.charging !== 'nabíjí' || !bess.chargedSome) throw new Error('úložiště se nenabíjí z přebytků');
+  if (!(bess.fullCharge > bess.cap * 0.9)) throw new Error('úložiště se nedobilo: ' + bess.fullCharge);
+  if (bess.dischargeMode !== 'vybíjí') throw new Error('úložiště při deficitu nevybíjí');
+  if (!bess.drained) throw new Error('vybíjení neubírá zásobu');
+  if (!(bess.peakOut > bess.smallMaxP * 2)) {
+    throw new Error('úložiště nedodává velký výkon (' + bess.peakOut + ' MW při poptávce ' + bess.bigDeficitDemand + ' MW)');
+  }
+  if (!(bess.cityHeld > 0.5)) throw new Error('úložiště nedrží město při výpadku: ' + bess.cityHeld);
+  if (!bess.dcNoReactive) throw new Error('DC přípojnice je penalizovaná za jalový výkon');
 
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {
