@@ -64,6 +64,36 @@ html, body {
 .obj-row .warn { color: #f0c040; }
 .obj-row .dim { color: #8b98a5; }
 
+/* import mapy podle skutečné krajiny */
+#import-dlg {
+  position: absolute; left: 50%; top: 54px; transform: translateX(-50%);
+  width: 520px; max-width: calc(100vw - 24px);
+  background: rgba(10, 14, 19, 0.96);
+  border: 1px solid #3c4c5c; border-radius: 10px;
+  padding: 8px 10px 10px; z-index: 9;
+}
+#import-dlg[hidden] { display: none; }
+#import-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+#import-head b { flex: 1; }
+#import-close { background: none; border: none; color: #8b98a5; font-size: 17px; cursor: pointer; }
+#import-body label { display: block; font-size: 11.5px; color: #8b98a5; margin-bottom: 3px; }
+#import-url {
+  width: 100%; box-sizing: border-box;
+  background: #1b2530; color: #e8edf2; border: 1px solid #45596e;
+  border-radius: 6px; padding: 6px 8px; font-size: 12.5px; font-family: inherit;
+}
+.import-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.import-row label { margin: 0; white-space: nowrap; }
+#import-km {
+  flex: 1; background: #2b3a4a; color: #e8edf2; border: 1px solid #45596e;
+  border-radius: 5px; font-size: 12px; padding: 3px 5px;
+}
+#import-status { margin-top: 8px; font-size: 11.5px; line-height: 1.45; }
+#import-status.bad { color: #ff6a5a; }
+#import-status.busy { color: #e8c84a; }
+#import-status.ok { color: #5dbb63; }
+.import-note { margin-top: 8px; font-size: 11px; line-height: 1.45; border-top: 1px solid #26323d; padding-top: 6px; }
+
 /* výhra scénáře */
 #victory {
   position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%);
@@ -87,7 +117,7 @@ html, body {
 /* fotorežim (klávesa P): schová celé UI */
 body.photo #hud, body.photo #toolbar, body.photo #linebar, body.photo #help,
 body.photo #btn-help, body.photo #minimap, body.photo #log, body.photo #hover-info,
-body.photo #bpanel { display: none !important; }
+body.photo #bpanel, body.photo #import-dlg, body.photo #objlist { display: none !important; }
 
 /* ---------- horní HUD ---------- */
 #hud {

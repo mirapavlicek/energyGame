@@ -17,6 +17,17 @@
 
   const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
+  /* Podniky: typ se volí podle okolní krajiny (důl u kopců, pila u lesa,
+     chemička u řeky). Sdílí je i import reálné mapy z OpenStreetMap. */
+  const IND_DEFS = [
+    { type: 'dul', label: 'Důl', demand: [18, 32], names: ['Anna', 'Barbora', 'Mayrau', 'Michal'] },
+    { type: 'hut', label: 'Huť', demand: [28, 48], names: ['Vítkov', 'Poldi', 'Liskovec'] },
+    { type: 'pila', label: 'Pila', demand: [8, 16], names: ['Borek', 'Javorina', 'Smrčina'] },
+    { type: 'chemicka', label: 'Chemička', demand: [22, 40], names: ['Ústí', 'Zaluží', 'Semtín'] },
+  ];
+  const DATA_DEF = { type: 'data', label: 'Datacentrum', demand: [24, 34], names: ['Alfa', 'Beta', 'Gama', 'Delta'] };
+  const STEEL_DEF = { type: 'ocelarna', label: 'Ocelárna', demand: [45, 70], names: ['Vítkovice', 'Kladno', 'Třinec'] };
+
   function generate(size, seed) {
     const rand = mulberry32(seed);
     const N = size;
@@ -177,14 +188,6 @@
 
     // --- průmysl: samostatné podniky s velkou spotřebou (napájí se z VN) ---
     const industries = [];
-    const IND_DEFS = [
-      { type: 'dul', label: 'Důl', demand: [18, 32], names: ['Anna', 'Barbora', 'Mayrau', 'Michal'] },
-      { type: 'hut', label: 'Huť', demand: [28, 48], names: ['Vítkov', 'Poldi', 'Liskovec'] },
-      { type: 'pila', label: 'Pila', demand: [8, 16], names: ['Borek', 'Javorina', 'Smrčina'] },
-      { type: 'chemicka', label: 'Chemička', demand: [22, 40], names: ['Ústí', 'Zaluží', 'Semtín'] },
-    ];
-    const DATA_DEF = { type: 'data', label: 'Datacentrum', demand: [24, 34], names: ['Alfa', 'Beta', 'Gama', 'Delta'] };
-    const STEEL_DEF = { type: 'ocelarna', label: 'Ocelárna', demand: [45, 70], names: ['Vítkovice', 'Kladno', 'Třinec'] };
     const wantedInd = Math.round(9 * areaScale); // hustší průmysl
     let indAttempts = 0;
     while (industries.length < wantedInd && indAttempts++ < 60000) {
@@ -319,4 +322,8 @@
   EG.T = T;
   EG.DIRS = DIRS;
   EG.generateMap = generate;
+  EG.CITY_NAMES = CITY_NAMES;
+  EG.IND_DEFS = IND_DEFS;
+  EG.DATA_DEF = DATA_DEF;
+  EG.STEEL_DEF = STEEL_DEF;
 })();

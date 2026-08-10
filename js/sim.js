@@ -2441,6 +2441,13 @@
       v: 1, seed: m.seed, size: m.size,
       type: u8ToB64(m.type),
       flow: u8ToB64(new Uint8Array(new Float32Array(m.flow).buffer)),
+      /* Výškopis se ukládá po bajtech (slouží jen k tónování terénu).
+         U importované mapy ho z osiva dopočítat nejde, u procedurální
+         je to levnější než ho počítat znovu. */
+      elev: u8ToB64(Uint8Array.from(m.elev, (e) => Math.max(0, Math.min(255, Math.round(e * 255))))),
+      // směr toku řek – podle něj přehrada zaplavuje proti proudu
+      flowDir: u8ToB64(Uint8Array.from(m.flowDir, (d) => d + 1)),
+      osm: m.osm || null,
       cities: m.cities, industries: m.industries, geoFields: m.geoFields, crossings: m.crossings,
       railways: m.railways, railTiles: m.railTiles,
       sim: {
@@ -2476,6 +2483,19 @@
     const map = EG.generateMap(d.size, d.seed);
     map.type.set(typeU8);
     map.flow.set(new Float32Array(flowU8.buffer));
+    if (d.elev) {
+      const elevU8 = b64ToU8(d.elev);
+      if (elevU8.length === d.size * d.size) {
+        for (let i = 0; i < elevU8.length; i++) map.elev[i] = elevU8[i] / 255;
+      }
+    }
+    if (d.flowDir) {
+      const dirU8 = b64ToU8(d.flowDir);
+      if (dirU8.length === d.size * d.size) {
+        for (let i = 0; i < dirU8.length; i++) map.flowDir[i] = dirU8[i] - 1;
+      }
+    }
+    if (d.osm) map.osm = d.osm;
     map.cities = d.cities;
     map.industries = d.industries;
     map.geoFields = d.geoFields;

@@ -1,7 +1,7 @@
 # ⚡ EnergyGame – roadmapa rozšíření
 
 Zásobník nápadů na další vývoj hry, seskupený do oblastí.
-Všech 77 položek je implementováno (✅), byť některé ve zjednodušené podobě.
+Všech 78 položek je implementováno (✅), byť některé ve zjednodušené podobě.
 
 ## Zdroje a technologie
 
@@ -179,6 +179,13 @@ Všech 77 položek je implementováno (✅), byť některé ve zjednodušené po
 68. ✅ Achievementy – – „Rok bez blackoutu", „100 % z obnovitelných zdrojů",
     „Exportní velmoc"…
 69. ✅ Výzva dne (🗓, seed z data) – – všichni hrají stejný seed se stejnými událostmi.
+78. ✅ Mapa podle skutečné krajiny (🌍) – vlož odkaz z Google Map (bere se
+    z něj jen poloha) a hrací plocha se postaví z OpenStreetMap: jezera,
+    koryta řek s průtokem, města se skutečnými jmény i velikostí, lesy,
+    průmyslové zóny a železniční koridory s trakčními stanicemi. Kopce
+    a hory dodá skutečný model terénu, měřený podle místního převýšení.
+    Co v datech chybí (geotermální pole, hraniční body, tratě v pustině),
+    se dogeneruje. Uložená hra si importovanou krajinu pamatuje.
 
 ## Technika
 

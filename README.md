@@ -268,6 +268,7 @@ rok. HUD ukazuje 🧾 rozjetý hospodářský výsledek a v popisku i odhad odvo
 | `Ctrl+Z` | vrátit poslední stavbu/vedení (plná vratka) |
 | `P` | fotorežim (schová UI) |
 | ✨ v HUD | kvalita grafiky (bloom, třpyt hladiny, vyhlazení hran) |
+| 🌍 v HUD | mapa podle skutečné krajiny (odkaz z Google Map / OSM) |
 | klik na hlášku v logu | skok kamerou na místo (`[x,y]`) |
 
 **Vedení stárne** provozem (klik na linku v režimu prohlížení otevře jeho
@@ -308,6 +309,45 @@ python3 -m http.server 8000
 ```
 
 Konkrétní mapu lze sdílet přes URL: `index.html?seed=123456`.
+
+## Mapa podle skutečné krajiny
+
+Tlačítko 🌍 v HUD postaví hrací plochu podle opravdového místa na Zemi.
+Otevři si ho v Google Mapách, zkopíruj odkaz z adresního řádku a vlož ho
+do dialogu – stačí, aby v adrese bylo `@šířka,délka` (zkrácený odkaz
+`maps.app.goo.gl` nejdřív rozklikni). Vzít jde i odkaz z OpenStreetMap
+(`#map=…`) nebo rovnou souřadnice `50.0755, 14.4378`.
+
+**Z Google Map se bere jen poloha.** Jejich licence odvozování dat
+zakazuje a API navíc chce klíč, takže samotnou krajinu staví
+**OpenStreetMap** přes Overpass API:
+
+| Ve hře | Z čeho |
+| --- | --- |
+| jezera, přehrady, břehy velkých řek | `natural=water`, `landuse=reservoir` |
+| koryta řek s průtokem a směrem toku | `waterway=river`, `canal` |
+| města se skutečnými jmény a velikostí | `place=city/town/village` + `population` |
+| lesy | `landuse=forest`, `natural=wood` |
+| podniky | `landuse=industrial` (typ podle okolní krajiny) |
+| železniční koridory a trakční stanice | `railway=rail` s `usage=main/branch` |
+| kopce a hory | skutečný model terénu (AWS Terrain Tiles) |
+
+- **Výškopis** se stahuje jako dlaždice Terrarium a měří se podle
+  místního převýšení: rovina zůstane rovinou, pahorkatina dostane kopce
+  na hřbetech a hornatý kraj i hory. Praha tak vyjde bez jediné hory,
+  Innsbruck s 13 % horských dlaždic. Když se model nestáhne, výšky se
+  odhadnou z odstupu od vody (údolí u řek, kopce na rozvodích).
+- **Počet obyvatel** se komprimuje logaritmicky, aby se milionové město
+  a vesnice vešly do hratelných 4–58 tisíc.
+- **Dogeneruje se, co v datech není**: geotermální pole, přeshraniční
+  body, a když v území nejsou žádné tratě, spojnice dvou nejvzdálenějších
+  měst. V úplné pustině přibude i pár smyšlených sídel, ať je co napájet.
+- Velikost území je 12 až 90 km. Větší území znamená víc dat (25 km kolem
+  Prahy je asi 2 MB po kompresi) a hrubší měřítko – při 25 km připadá na
+  dlaždici zhruba 78 metrů.
+- Uložená hra si importovanou krajinu i výškopis pamatuje.
+
+Data © přispěvatelé [OpenStreetMap](https://www.openstreetmap.org/copyright) (ODbL).
 
 ## Grafika
 
@@ -359,5 +399,6 @@ js/map.js       – generátor mapy (terén, řeky, města)
 js/atlas.js     – procedurální sprite atlas
 js/renderer.js  – WebGL2 izometrický renderer
 js/sim.js       – simulace sítě (DC power flow, ekonomika, města)
+js/osm.js       – import skutečné krajiny z OpenStreetMap
 js/game.js      – herní smyčka, vstup, HUD, minimapa
 ```

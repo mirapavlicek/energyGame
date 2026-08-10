@@ -3312,6 +3312,194 @@ const server = http.createServer((req, res) => {
   await page.setViewportSize({ width: 1100, height: 700 });
   await nextFrames(3);
 
+  // --- mapa podle skutečné krajiny: čtení odkazu a výřez ---
+  const place = await page.evaluate(() => {
+    const p = EG.parsePlace;
+    const r = {
+      google: p('https://www.google.com/maps/@50.0755,14.4378,12z'),
+      googlePlace: p('https://www.google.com/maps/place/Praha/@50.0755,14.4378,11z/data=!3m1!4b1'),
+      googleData: p('https://www.google.com/maps/place/X/data=!3m1!4b1!3d49.1951!4d16.6068'),
+      googleQuery: p('https://maps.google.com/?q=48.8584,2.2945'),
+      osm: p('https://www.openstreetmap.org/#map=12/50.0755/14.4378'),
+      plain: p('50.0755, 14.4378'),
+      junk: p('kde to jsem'),
+      empty: p(''),
+      outOfRange: p('123.0, 14.0'),
+    };
+    const b25 = EG.bboxAround(50.0755, 14.4378, 25);
+    const b50 = EG.bboxAround(50.0755, 14.4378, 50);
+    // strana výřezu v km: poledníky se k pólům sbíhají
+    const kmLat = (b25.n - b25.s) * 111.32;
+    const kmLon = (b25.e - b25.w) * 111.32 * Math.cos(50.0755 * Math.PI / 180);
+    const q = EG.overpassQuery(b25);
+    return {
+      ...r,
+      kmLat: +kmLat.toFixed(2), kmLon: +kmLon.toFixed(2),
+      wider: (b50.n - b50.s) / (b25.n - b25.s),
+      queryHasWater: q.includes('natural"="water'),
+      queryHasRail: q.includes('railway"="rail'),
+      queryHasPlace: q.includes('place'),
+      queryHasBox: q.includes(b25.s.toFixed(5)),
+      zoom12: EG.terrainZoom(b25, 16),
+      zoomBudget: EG.terrainZoom(EG.bboxAround(50.0755, 14.4378, 90), 16),
+    };
+  });
+  console.log('mapa z odkazu:', JSON.stringify(place));
+  for (const k of ['google', 'googlePlace', 'googleQuery', 'osm', 'plain']) {
+    const v = place[k];
+    if (!v) throw new Error('odkaz „' + k + '" se nepodařilo přečíst');
+  }
+  if (Math.abs(place.google.lat - 50.0755) > 1e-6 || Math.abs(place.google.lon - 14.4378) > 1e-6) {
+    throw new Error('špatné souřadnice z odkazu Google Map: ' + JSON.stringify(place.google));
+  }
+  if (Math.abs(place.googleData.lat - 49.1951) > 1e-6) throw new Error('nepřečetl jsem !3d/!4d z odkazu');
+  if (Math.abs(place.googleQuery.lon - 2.2945) > 1e-6) throw new Error('nepřečetl jsem ?q= souřadnice');
+  if (Math.abs(place.osm.lat - 50.0755) > 1e-6) throw new Error('nepřečetl jsem odkaz z OpenStreetMap');
+  if (place.junk || place.empty || place.outOfRange) throw new Error('nesmysl se tváří jako poloha');
+  if (Math.abs(place.kmLat - 25) > 0.2 || Math.abs(place.kmLon - 25) > 0.2) {
+    throw new Error('výřez není čtvercových 25 km: ' + place.kmLat + ' × ' + place.kmLon);
+  }
+  if (Math.abs(place.wider - 2) > 0.01) throw new Error('dvojnásobné území nemá dvojnásobnou stranu');
+  if (!place.queryHasWater || !place.queryHasRail || !place.queryHasPlace || !place.queryHasBox) {
+    throw new Error('dotaz na Overpass nemá všechno, co potřebujeme');
+  }
+  if (!(place.zoom12 >= 11 && place.zoom12 <= 13)) throw new Error('přiblížení výškopisu mimo rozsah: ' + place.zoom12);
+  if (!(place.zoomBudget < place.zoom12)) throw new Error('větší území musí sáhnout po hrubším výškopisu');
+
+  // --- převod dat na hrací plochu (bez sítě, na vlastní předloze) ---
+  const osmMap = await page.evaluate(() => {
+    // jednotkový výřez: zeměpisná délka 0..1 -> x, šířka 1..0 -> y
+    const bbox = { s: 0, w: 0, n: 1, e: 1, lat: 0.5, lon: 0.5, km: 25 };
+    const ring = (latA, lonA, latB, lonB) => [
+      { lat: latA, lon: lonA }, { lat: latA, lon: lonB }, { lat: latB, lon: lonB },
+      { lat: latB, lon: lonA }, { lat: latA, lon: lonA },
+    ];
+    const osm = { elements: [
+      { type: 'way', tags: { natural: 'water' }, geometry: ring(0.60, 0.20, 0.70, 0.30) },
+      { type: 'way', tags: { waterway: 'river' },
+        geometry: [{ lat: 0.90, lon: 0.05 }, { lat: 0.50, lon: 0.50 }, { lat: 0.10, lon: 0.95 }] },
+      { type: 'way', tags: { landuse: 'forest' }, geometry: ring(0.60, 0.60, 0.80, 0.80) },
+      { type: 'way', tags: { landuse: 'industrial', name: 'Zóna Sever' }, geometry: ring(0.10, 0.10, 0.20, 0.20) },
+      // trať rozsekaná na dva úseky, které na sebe navazují
+      { type: 'way', tags: { railway: 'rail', name: 'Trať X' },
+        geometry: [{ lat: 0.95, lon: 0.10 }, { lat: 0.70, lon: 0.35 }] },
+      { type: 'way', tags: { railway: 'rail' },
+        geometry: [{ lat: 0.70, lon: 0.35 }, { lat: 0.45, lon: 0.60 }] },
+      { type: 'node', lat: 0.50, lon: 0.20, tags: { place: 'city', name: 'Velkoměsto', population: '250000' } },
+      { type: 'node', lat: 0.35, lon: 0.75, tags: { place: 'village', name: 'Vesnička', population: '400' } },
+    ] };
+    const map = EG.buildMapFromOSM(osm, { size: 322, bbox, seed: 42 });
+    const T = EG.T;
+    const counts = {};
+    for (let i = 0; i < map.type.length; i++) counts[map.type[i]] = (counts[map.type[i]] || 0) + 1;
+
+    // řeka musí mít průtok a směr, aby na ní šla postavit elektrárna
+    let maxFlow = 0, dirSet = 0, riverSpot = null;
+    for (let i = 0; i < map.flow.length; i++) {
+      if (map.flow[i] > maxFlow) maxFlow = map.flow[i];
+      if (map.type[i] === T.RIVER && map.flowDir[i] >= 0) dirSet++;
+    }
+    const sim = new EG.Sim(map);
+    sim.money = 100000;
+    for (let i = 0; i < map.type.length && !riverSpot; i++) {
+      if (map.type[i] !== T.RIVER) continue;
+      const x = i % 322, y = (i / 322) | 0;
+      if (sim.canPlace('hydro', x, y).ok) riverSpot = [x, y];
+    }
+    const hydro = riverSpot ? sim.place('hydro', riverSpot[0], riverSpot[1]) : null;
+    for (let i = 0; i < 20; i++) sim.tick(0.1);
+
+    // uložení a načtení nesmí importovanou krajinu ani výškopis ztratit
+    const restored = EG.restore(EG.serialize(sim));
+    let typeSame = true, elevMaxDiff = 0;
+    for (let i = 0; i < map.type.length; i++) {
+      if (restored.map.type[i] !== map.type[i]) { typeSame = false; break; }
+      const d = Math.abs(restored.map.elev[i] - map.elev[i]);
+      if (d > elevMaxDiff) elevMaxDiff = d;
+    }
+
+    return {
+      water: counts[T.WATER] || 0, river: counts[T.RIVER] || 0, forest: counts[T.FOREST] || 0,
+      maxFlow: +maxFlow.toFixed(1), dirSet,
+      cities: map.cities.map((c) => c.name + ':' + c.pop),
+      citiesFromOSM: map.osm.citiesFromOSM,
+      industries: map.industries.filter((o) => o.type !== 'trakce').map((o) => o.name),
+      traction: map.industries.filter((o) => o.type === 'trakce').length,
+      railways: map.railways.length,
+      railName: map.railways[0] && map.railways[0].name,
+      railLen: map.railways[0] && map.railways[0].path.length,
+      railTiles: map.railTiles.length,
+      crossings: map.crossings.length, geo: map.geoFields.length,
+      hydroGen: hydro ? +hydro.gen.toFixed(1) : 0,
+      cityPowered: map.cities[0].powered !== undefined,
+      typeSame, elevMaxDiff: +elevMaxDiff.toFixed(3),
+      restoredOsm: !!restored.map.osm,
+      popBig: EG.gamePop({ population: '250000' }), popSmall: EG.gamePop({ population: '400' }),
+      popNone: EG.gamePop({ place: 'town' }),
+    };
+  });
+  console.log('krajina z OSM:', JSON.stringify(osmMap));
+  if (!(osmMap.water > 400)) throw new Error('jezero se nevykreslilo: ' + osmMap.water + ' dlaždic');
+  if (!(osmMap.river > 200)) throw new Error('řeka se nevykreslila: ' + osmMap.river + ' dlaždic');
+  if (!(osmMap.forest > 400)) throw new Error('les se nevykreslil: ' + osmMap.forest + ' dlaždic');
+  if (!(osmMap.maxFlow > 3)) throw new Error('řeka nemá průtok: ' + osmMap.maxFlow);
+  if (!(osmMap.dirSet > 100)) throw new Error('řeka nemá určený směr toku: ' + osmMap.dirSet);
+  if (osmMap.citiesFromOSM !== 2) throw new Error('sídla z OSM nesedí: ' + osmMap.citiesFromOSM);
+  if (!osmMap.cities.some((c) => c.startsWith('Velkoměsto')) || !osmMap.cities.some((c) => c.startsWith('Vesnička'))) {
+    throw new Error('města nemají skutečná jména: ' + JSON.stringify(osmMap.cities));
+  }
+  if (osmMap.cities.length > 6) throw new Error('dogenerovalo se moc měst navíc: ' + osmMap.cities.length);
+  if (!(osmMap.popBig > osmMap.popSmall + 15)) {
+    throw new Error('velikost sídel se nerozlišuje: ' + osmMap.popBig + ' vs ' + osmMap.popSmall);
+  }
+  if (!(osmMap.popBig <= 58 && osmMap.popSmall >= 4)) throw new Error('populace mimo hratelný rozsah');
+  if (!(osmMap.popNone > 4)) throw new Error('sídlo bez údaje o populaci nedostalo odhad');
+  if (!osmMap.industries.some((n) => n.includes('Zóna Sever'))) {
+    throw new Error('průmyslová zóna z OSM chybí: ' + JSON.stringify(osmMap.industries));
+  }
+  if (osmMap.railways !== 1) throw new Error('úseky trati se nespojily do koridoru: ' + osmMap.railways);
+  if (osmMap.railName !== 'Trať X') throw new Error('trať ztratila jméno z OSM: ' + osmMap.railName);
+  if (!(osmMap.railLen > 200) || !(osmMap.railTiles > 200)) throw new Error('trať je moc krátká: ' + osmMap.railLen);
+  if (!(osmMap.traction > 0)) throw new Error('podél trati nevznikla trakční stanice');
+  if (!(osmMap.crossings >= 3) || !(osmMap.geo >= 2)) throw new Error('chybí hraniční body nebo geotermální pole');
+  if (!(osmMap.hydroGen > 0)) throw new Error('na importované řece nejde vyrobit proud: ' + osmMap.hydroGen);
+  if (!osmMap.typeSame) throw new Error('uložení a načtení změnilo terén importované mapy');
+  if (!(osmMap.elevMaxDiff < 0.01)) throw new Error('výškopis se uložením rozešel: ' + osmMap.elevMaxDiff);
+  if (!osmMap.restoredOsm) throw new Error('načtená hra zapomněla, že jde o importovanou mapu');
+
+  // --- výškopis: rovina zůstane rovinou, hory jen tam, kde jsou ---
+  const relief = await page.evaluate(() => {
+    const bbox = { s: 0, w: 0, n: 1, e: 1, lat: 0.5, lon: 0.5, km: 25 };
+    const osm = { elements: [
+      { type: 'node', lat: 0.5, lon: 0.5, tags: { place: 'town', name: 'Město', population: '9000' } },
+    ] };
+    const run = (metersPerTile) => {
+      const el = new Float32Array(322 * 322);
+      for (let y = 0; y < 322; y++) for (let x = 0; x < 322; x++) el[y * 322 + x] = x * metersPerTile;
+      const map = EG.buildMapFromOSM(osm, { size: 322, bbox, seed: 3, elevation: el });
+      const counts = {};
+      for (let i = 0; i < map.type.length; i++) counts[map.type[i]] = (counts[map.type[i]] || 0) + 1;
+      return {
+        relief: map.osm.relief, real: map.osm.realElevation,
+        hill: counts[EG.T.HILL] || 0, mountain: counts[EG.T.MOUNTAIN] || 0,
+      };
+    };
+    const flat = run(0.02);   // převýšení ~6 m
+    const rolling = run(1);   // ~300 m
+    const alpine = run(6);    // ~1800 m
+    const noData = EG.buildMapFromOSM(osm, { size: 322, bbox, seed: 3 });
+    return { flat, rolling, alpine, noDataReal: noData.osm.realElevation };
+  });
+  console.log('výškopis:', JSON.stringify(relief));
+  if (!relief.flat.real || relief.noDataReal) throw new Error('nepoznám, jestli je výškopis skutečný');
+  if (relief.flat.hill !== 0 || relief.flat.mountain !== 0) {
+    throw new Error('z roviny vyrostly kopce: ' + JSON.stringify(relief.flat));
+  }
+  if (!(relief.rolling.hill > 1000)) throw new Error('pahorkatina nemá kopce: ' + relief.rolling.hill);
+  if (relief.rolling.mountain !== 0) throw new Error('pahorkatina má hory: ' + relief.rolling.mountain);
+  if (!(relief.alpine.mountain > 5000)) throw new Error('hornatý kraj nemá hory: ' + relief.alpine.mountain);
+  if (!(relief.alpine.relief > relief.rolling.relief * 3)) throw new Error('převýšení se nepočítá');
+
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {
     const { sim, map, renderer } = EG.game;
@@ -3346,6 +3534,50 @@ const server = http.createServer((req, res) => {
   console.log('živá hra:', JSON.stringify(live));
   await page.waitForTimeout(900);
   await page.screenshot({ path: '/tmp/eg_played.png' });
+
+  // --- dialog importu: čte odkaz, hlásí nesmysl a umí mapu vyměnit ---
+  // (až na konci – vymění živou mapu za importovanou)
+  const importUi = await page.evaluate(async () => {
+    document.getElementById('btn-import').click();
+    const dlg = document.getElementById('import-dlg');
+    const opened = !dlg.hidden;
+    // nesmyslný vstup se musí zastavit dřív, než se sáhne na síť
+    document.getElementById('import-url').value = 'tady u nás za rohem';
+    document.getElementById('import-go').click();
+    await new Promise((r) => setTimeout(r, 60));
+    const status = document.getElementById('import-status');
+    const badClass = status.className;
+    document.getElementById('import-close').click();
+
+    // výměna mapy za importovanou (bez sítě, z předlohy)
+    const bbox = { s: 0, w: 0, n: 1, e: 1, lat: 50.0755, lon: 14.4378, km: 25 };
+    const osm = { elements: [
+      { type: 'way', tags: { waterway: 'river' },
+        geometry: [{ lat: 0.9, lon: 0.1 }, { lat: 0.1, lon: 0.9 }] },
+      { type: 'node', lat: 0.5, lon: 0.3, tags: { place: 'town', name: 'Testov', population: '12000' } },
+    ] };
+    const built = EG.buildMapFromOSM(osm, { size: 322, bbox, seed: 5 });
+    EG.game.applyMap(built, '50.076, 14.438 · 25 km');
+    return {
+      opened, badClass, closed: dlg.hidden,
+      mapIsOsm: !!EG.game.map.osm,
+      city: EG.game.map.cities[0] && EG.game.map.cities[0].name,
+      money: Math.round(EG.game.sim.money),
+      // přeshraniční body si zakládá simulace sama, hráčovy stavby zmizet musí
+      built: EG.game.sim.buildings.filter((b) => b.kind !== 'xborder').length,
+      crossings: EG.game.sim.buildings.filter((b) => b.kind === 'xborder').length,
+    };
+  });
+  await nextFrames(2);
+  const importLabel = await page.evaluate(() => document.getElementById('seed-label').textContent);
+  console.log('dialog importu:', JSON.stringify({ ...importUi, label: importLabel }));
+  if (!importUi.opened || !importUi.closed) throw new Error('dialog importu se neotevře nebo nezavře');
+  if (!importUi.badClass.includes('bad')) throw new Error('nesmyslný odkaz se nereklamuje: ' + importUi.badClass);
+  if (!importUi.mapIsOsm || importUi.city !== 'Testov') throw new Error('výměna mapy neproběhla: ' + importUi.city);
+  if (importUi.built !== 0) throw new Error('importovaná mapa si nese stavby z minulé hry: ' + importUi.built);
+  if (!(importUi.crossings > 0)) throw new Error('importovaná mapa nemá přeshraniční body');
+  if (importUi.money !== 900) throw new Error('import nezačíná se startovními penězi: ' + importUi.money);
+  if (!importLabel.startsWith('🌍')) throw new Error('HUD neukazuje, že jde o importovanou mapu: ' + importLabel);
 
   await browser.close();
   server.close();

@@ -123,6 +123,16 @@
       $('#chart').hidden = !chartOn;
     });
     $('#btn-gfx').addEventListener('click', () => setQuality(gfxQuality === 'high' ? 'low' : 'high'));
+
+    // mapa podle skutečné krajiny
+    $('#btn-import').addEventListener('click', () => {
+      const el = $('#import-dlg');
+      el.hidden = !el.hidden;
+      if (!el.hidden) $('#import-url').focus();
+    });
+    $('#import-close').addEventListener('click', () => { $('#import-dlg').hidden = true; });
+    $('#import-go').addEventListener('click', runImport);
+    $('#import-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') runImport(); });
     $('#btn-save').addEventListener('click', () => {
       try {
         localStorage.setItem('eg_save', EG.serialize(sim));
@@ -255,6 +265,7 @@
       get sim() { return sim; }, get map() { return map; }, get renderer() { return renderer; },
       plan: { enter: enterPlan, confirm: confirmPlan, cancel: cancelPlan, get active() { return planning; } },
       replay: { start: startReplay, stop: stopReplay, get active() { return !!replaying; } },
+      applyMap: applyImportedMap,
     };
 
     requestAnimationFrame(loop);
@@ -366,7 +377,8 @@
     if (planning || replaying) return;
     if (!sim._log) { sim.msg('Replay funguje jen pro hru rozehranou v této seanci', 'warn'); return; }
     const base = { sim, map, speed };
-    const fresh = new EG.Sim(EG.generateMap(map.size, map.seed));
+    // importovanou mapu z osiva vyrobit nejde, startuje se z uloženého otisku
+    const fresh = pristineSave ? EG.restore(pristineSave) : new EG.Sim(EG.generateMap(map.size, map.seed));
     fresh.money = sim._startMoney;
     replaying = { base, log: sim._log.slice(), i: 0, endT: sim.time };
     speed = 0; updateSpeedLabel();
@@ -500,6 +512,108 @@
     }
     $('#objlist-rows').innerHTML = rows.join('') ||
       '<div class="dim" style="padding:6px">Nic tu není.</div>';
+  }
+
+  /* ---------- mapa podle skutečné krajiny ----------
+     Poloha se bere z odkazu (Google Mapy, OpenStreetMap i holé
+     souřadnice), samotná krajina z OpenStreetMap. */
+  let pristineSave = null;  // čistý stav importované mapy (replay z něj startuje)
+  let importing = false;
+
+  function setImportStatus(html, cls) {
+    const el = $('#import-status');
+    el.className = cls || 'dim';
+    el.innerHTML = html;
+  }
+
+  function applyImportedMap(newMap, label) {
+    if (planning) cancelPlan();
+    if (replaying) stopReplay();
+    map = newMap;
+    sim = new EG.Sim(map);
+    scenario = null; scenarioT = 0; scenarioWon = false;
+    lineFrom = null;
+    undoStack.length = 0;
+    history.length = 0;
+    lastSample = 0;
+    EG.onTerrainChanged();
+    setupMinimap();
+    closePanel();
+    $('#gameover').hidden = true;
+    $('#victory').hidden = true;
+    instrument(sim);
+    // replay nejde přehrát z osiva – importovaná mapa se z něj nedá vyrobit
+    pristineSave = EG.serialize(sim);
+    const c0 = map.cities[0];
+    if (c0) {
+      const [wx, wy] = renderer.tileToWorld(c0.x, c0.y);
+      renderer.cam.x = wx; renderer.cam.y = wy; renderer.cam.zoom = 0.9;
+    }
+    $('#seed-label').title = 'Mapa podle skutečné krajiny (' + label +
+      ') · data © přispěvatelé OpenStreetMap';
+  }
+
+  async function runImport() {
+    if (importing) return;
+    const place = EG.parsePlace($('#import-url').value);
+    if (!place) {
+      setImportStatus('Z toho polohu nevyčtu. Potřebuju odkaz s <b>@šířka,délka</b> (Google Mapy), ' +
+        '<b>#map=…</b> (OpenStreetMap), nebo rovnou <b>50.0755, 14.4378</b>.', 'bad');
+      return;
+    }
+    const km = +$('#import-km').value || 25;
+    const bbox = EG.bboxAround(place.lat, place.lon, km);
+    const coords = place.lat.toFixed(4) + ', ' + place.lon.toFixed(4);
+    importing = true;
+    $('#import-go').disabled = true;
+    try {
+      setImportStatus('Beru území ' + km + ' km kolem ' + coords + '…', 'busy');
+      const osm = await EG.fetchOSM(bbox, {
+        onProgress: (m) => setImportStatus(m + ' <span class="dim">(velké území může trvat i minutu)</span>', 'busy'),
+      });
+      // výškopis je bonus – když se nestáhne, výšky se odvodí z vodstva
+      let elevation = null;
+      try {
+        elevation = await EG.fetchElevation(bbox, MAP_SIZE, {
+          onProgress: (m) => setImportStatus(m, 'busy'),
+        });
+      } catch (e) { elevation = null; }
+      setImportStatus('Stavím krajinu z ' + osm.elements.length.toLocaleString('cs-CZ') + ' prvků…', 'busy');
+      // krátká pauza, ať prohlížeč stihne hlášku vykreslit před výpočtem
+      await new Promise((r) => setTimeout(r, 30));
+      // osivo z polohy: stejné místo dá vždycky stejné doplňky
+      const seed = Math.abs((Math.round(place.lat * 10000) * 73856093) ^
+        (Math.round(place.lon * 10000) * 19349663)) % 1000000000 || 1;
+      const built = EG.buildMapFromOSM(osm, { size: MAP_SIZE, bbox, seed, elevation });
+      const s = built.osm;
+      if (s.cities === 0) {
+        setImportStatus('V tomhle území nejsou žádná sídla ani souš k zastavění. ' +
+          'Zkus jiné místo nebo větší výřez.', 'bad');
+        return;
+      }
+      applyImportedMap(built, coords + ' · ' + km + ' km');
+      $('#import-dlg').hidden = true;
+      sim.msg('🌍 Mapa postavená podle skutečné krajiny (' + coords + ', ' + km + ' km).');
+      sim.msg('Města: ' + s.cities + (s.citiesFromOSM < s.cities ? ' (z toho ' + s.citiesFromOSM + ' skutečných)' : '') +
+        ' · podniky: ' + s.industries + ' · tratě: ' + s.railways +
+        (s.railsFromOSM === 0 ? ' (dogenerované)' : '') +
+        ' · vodní plochy: ' + s.waterTiles + ' dlaždic · koryta řek: ' + s.riverTiles);
+      sim.msg(s.realElevation
+        ? '⛰ Výškopis ze skutečného modelu terénu, převýšení ' + s.relief + ' m.'
+        : '⛰ Výškopis se nestáhl – výšky odvozené z vodstva.', s.realElevation ? 'info' : 'warn');
+      sim.msg('Data © přispěvatelé OpenStreetMap (ODbL).');
+      setImportStatus('Hotovo.', 'ok');
+    } catch (e) {
+      if (e && e.name === 'AbortError') setImportStatus('Zrušeno.', 'dim');
+      else {
+        setImportStatus('Nepovedlo se: ' + e.message + '<br>' +
+          '<span class="dim">Overpass bývá občas přetížený – zkus to za chvíli, ' +
+          'nebo si vyber menší území.</span>', 'bad');
+      }
+    } finally {
+      importing = false;
+      $('#import-go').disabled = false;
+    }
   }
 
   /* ---------- načtení uložené hry ---------- */
@@ -682,6 +796,9 @@
     }, { passive: false });
 
     window.addEventListener('keydown', (e) => {
+      // psaní do formuláře (odkaz na mapu) nesmí přepínat nástroje
+      const el = document.activeElement;
+      if (el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) return;
       const k = e.key.toLowerCase();
       if (k === 'z' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); undoLast(); return; }
       // cheat: napiš „funds" a dostaneš 1 000 €
@@ -1771,7 +1888,10 @@
     $('#income').textContent = (st.income >= 0 ? '+' : '') + (st.income * 60).toFixed(1) + '/min';
     $('#score').textContent = Math.floor(sim.score).toLocaleString('cs-CZ');
     const best = updateRecord();
-    $('#seed-label').textContent = 'seed ' + map.seed + (best > 0 ? ' · rekord ' + best.toLocaleString('cs-CZ') : '');
+    $('#seed-label').textContent = (map.osm
+      ? '🌍 ' + map.osm.bbox.lat.toFixed(3) + ', ' + map.osm.bbox.lon.toFixed(3) +
+        ' · ' + Math.round(map.osm.bbox.km) + ' km'
+      : 'seed ' + map.seed) + (best > 0 ? ' · rekord ' + best.toLocaleString('cs-CZ') : '');
     const ph = sim.dayPhase || 0;
     const hours = Math.floor(6 + ph * 24) % 24;
     const seasonIco = { 'jaro': '🌱', 'léto': '☀️', 'podzim': '🍂', 'zima': '❄️' }[sim.seasonName] || '';
