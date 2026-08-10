@@ -188,6 +188,12 @@
     });
     $('#objlist-close').addEventListener('click', () => { $('#objlist').hidden = true; });
     $('#objlist-filter').addEventListener('change', refreshObjList);
+    // varování v HUD je zkratka rovnou do přehledu zatížení
+    $('#overload-item').addEventListener('click', () => {
+      $('#objlist').hidden = false;
+      $('#objlist-filter').value = 'load';
+      refreshObjList();
+    });
     $('#objlist-rows').addEventListener('click', (e) => {
       const row = e.target.closest('.obj-row');
       if (!row) return;
@@ -196,6 +202,11 @@
       if (row.dataset.city !== undefined) {
         const c = map.cities[+row.dataset.city];
         if (c) selectCity(c);
+        return;
+      }
+      if (row.dataset.line !== undefined) {
+        const l = sim.lines.find((o) => o.id === +row.dataset.line);
+        if (l) selectLine(l);
         return;
       }
       const b = sim.buildings.find((o) => o.id === +row.dataset.id);
@@ -471,47 +482,149 @@
     return 'gen';
   }
 
+  /* Proužek zatížení: do 75 % je klid, do 100 % se jede na hraně,
+     nad 100 % už prvek nestíhá a soustava ho začne obcházet. */
+  function loadCell(load) {
+    const pct = Math.round(load * 100);
+    const col = load > 1 ? '#ff5340' : load > 0.75 ? '#e8c84a' : '#5dbb63';
+    return '<span class="o-load" title="zatížení ' + pct + ' %">' +
+      '<i style="width:' + Math.min(100, pct) + '%;background:' + col + '"></i>' +
+      '<b>' + pct + ' %</b></span>';
+  }
+
+  const loadState = (load) => load > 1 ? '<span class="bad">přetíženo</span>'
+    : load > 0.75 ? '<span class="warn">na hraně</span>'
+    : '<span class="dim">ok</span>';
+
+  /* Kolik prvků zrovna nestíhá. Počítá se ze stejných čísel, jaká ukazuje
+     přehled zatížení, aby varování v HUD a seznam vždycky souhlasily. */
+  function countOverloads() {
+    let n = 0;
+    for (const l of sim.lines) if ((l.load || 0) > 1) n++;
+    for (const b of sim.buildings) {
+      if (b.kind !== 'sub') continue;
+      for (const v of Object.values(b.trafoLoad || {})) if (v > 1) n++;
+    }
+    return n;
+  }
+
+  /* Nejvytíženější trafo rozvodny – podle něj se pozná, jestli rozvodna
+     stíhá převádět, i když samotná vedení k ní mají rezervu. */
+  function worstTrafo(b) {
+    let worst = 0, key = null;
+    for (const [k, v] of Object.entries(b.trafoLoad || {})) {
+      if (v > worst) { worst = v; key = k; }
+    }
+    return { load: worst, key };
+  }
+
   function refreshObjList() {
     const filter = $('#objlist-filter').value;
     const rows = [];
-    for (const b of sim.buildings) {
-      if (filter === 'city') break; // města se vypisují níž, stavby sem nepatří
-      const grp = kindGroup(b.kind);
-      const problem = b.broken || (EG.fuelDefOf(b) && b.fuel <= 0) || (b.cond !== undefined && b.cond < 0.3);
-      if (filter === 'gen' && grp !== 'gen') continue;
-      if (filter === 'sub' && grp !== 'sub') continue;
-      if (filter === 'stor' && grp !== 'stor') continue;
-      if (filter === 'bad' && !problem) continue;
-      let state;
-      if (b.broken) state = '<span class="bad">porucha</span>';
-      else if (b.mothball) state = '<span class="dim">konzerv.</span>';
-      else if (EG.fuelDefOf(b) && b.fuel <= 0) state = '<span class="bad">bez paliva</span>';
-      else if (b.cond !== undefined && b.cond < 0.3) state = '<span class="warn">zanedbaná</span>';
-      else state = '<span class="dim">ok</span>';
-      const perf = EG.STORAGE[b.kind]
-        ? Math.round(b.charge) + ' MWs'
-        : b.kind === 'sub' ? sim.fieldsUsed(b) + '/' + sim.fieldLimit(b) + ' polí'
-        : (b.out || 0).toFixed(0) + ' MW';
-      rows.push('<div class="obj-row" data-x="' + b.x + '" data-y="' + b.y + '" data-id="' + b.id + '">' +
-        '<span class="o-name">' + EG.BUILD[b.kind].name + ' [' + b.x + ',' + b.y + ']</span>' +
-        '<span>' + perf + '</span>' + state + '</div>');
+    const add = (html, load) => rows.push({ html, load: load === undefined ? -1 : load });
+    const all = filter === 'all';
+    const load = filter === 'load';   // přehled zatížení, nejhorší nahoře
+    const bad = filter === 'bad';
+
+    // --- stavby ---
+    if (filter !== 'city' && filter !== 'line') {
+      for (const b of sim.buildings) {
+        const grp = kindGroup(b.kind);
+        const wt = b.kind === 'sub' ? worstTrafo(b) : null;
+        const fieldsFull = b.kind === 'sub' && sim.fieldsUsed(b) >= sim.fieldLimit(b);
+        // elektrárna, která vyrábí, ale výkon se z ní nedostane ven
+        const stuck = grp === 'gen' && b.gen > 0.5 && b.out < b.gen * 0.9;
+        const problem = b.broken || (EG.fuelDefOf(b) && b.fuel <= 0) ||
+          (b.cond !== undefined && b.cond < 0.3) || (wt && wt.load > 1) || stuck;
+        if (filter === 'gen' && grp !== 'gen') continue;
+        if (filter === 'sub' && grp !== 'sub') continue;
+        if (filter === 'stor' && grp !== 'stor') continue;
+        if (bad && !problem) continue;
+        // v přehledu zatížení mají trafa vlastní řádky, rozvodnu neopakujeme
+        if (load) break;
+        let state;
+        if (b.broken) state = '<span class="bad">porucha</span>';
+        else if (b.mothball) state = '<span class="dim">konzerv.</span>';
+        else if (EG.fuelDefOf(b) && b.fuel <= 0) state = '<span class="bad">bez paliva</span>';
+        else if (wt && wt.load > 1) state = '<span class="bad">trafo přetíženo</span>';
+        else if (stuck) state = '<span class="warn">neodvádí výkon</span>';
+        else if (fieldsFull) state = '<span class="warn">pole plná</span>';
+        else if (b.cond !== undefined && b.cond < 0.3) state = '<span class="warn">zanedbaná</span>';
+        else state = '<span class="dim">ok</span>';
+        const perf = EG.STORAGE[b.kind]
+          ? Math.round(b.charge) + ' MWs'
+          : b.kind === 'sub' ? sim.fieldsUsed(b) + '/' + sim.fieldLimit(b) + ' polí'
+          : (b.out || 0).toFixed(0) + ' / ' + (b.gen || 0).toFixed(0) + ' MW';
+        add('<div class="obj-row" data-x="' + b.x + '" data-y="' + b.y + '" data-id="' + b.id + '">' +
+          '<span class="o-name">' + EG.BUILD[b.kind].name + ' [' + b.x + ',' + b.y + ']</span>' +
+          '<span class="o-val">' + perf + '</span>' +
+          (wt && wt.key ? loadCell(wt.load) : '<span class="o-load"></span>') +
+          state + '</div>', wt ? wt.load : -1);
+      }
     }
-    // města: kandidáti na městskou dopravu i přehled napájení
-    if (filter === 'all' || filter === 'city' || filter === 'bad') {
+
+    // --- vedení: tady se přetížení projeví nejdřív ---
+    if (all || load || bad || filter === 'line') {
+      for (const l of sim.lines) {
+        const broken = l.broken || (l.trippedUntil && l.trippedUntil > sim.time);
+        if (bad && !broken && !(l.load > 1)) continue;
+        const LT = EG.LINE_TYPES[l.level];
+        const a = sim.buildings.find((o) => o.id === l.a);
+        const b2 = sim.buildings.find((o) => o.id === l.b);
+        if (!a || !b2) continue;
+        const mid = sim._lineMid(l);
+        const cap = Math.round(l.effCap || l.cap);
+        let state;
+        if (l.broken) state = '<span class="bad">porucha</span>';
+        else if (l.trippedUntil && l.trippedUntil > sim.time) state = '<span class="bad">odpojeno</span>';
+        else state = loadState(l.load || 0);
+        add('<div class="obj-row" data-x="' + Math.round(mid.x) + '" data-y="' + Math.round(mid.y) +
+          '" data-line="' + l.id + '">' +
+          '<span class="o-name">' + LT.name + (l.n > 1 ? ' ' + l.n + '×' : '') +
+          ' <span class="dim">[' + a.x + ',' + a.y + ']–[' + b2.x + ',' + b2.y + ']</span></span>' +
+          '<span class="o-val">' + Math.abs(l.flow || 0).toFixed(0) + ' / ' + cap + ' MW</span>' +
+          loadCell(l.load || 0) + state + '</div>', l.load || 0);
+      }
+    }
+
+    // --- jednotlivá trafa: v přehledu zatížení je vidět, které dokoupit ---
+    if (load) {
+      for (const b of sim.buildings) {
+        if (b.kind !== 'sub') continue;
+        for (const [key, count] of Object.entries(b.trafos || {})) {
+          const t = EG.TRAFOS[key];
+          if (t.coupler) continue;
+          const lo = (b.trafoLoad || {})[key] || 0;
+          add('<div class="obj-row" data-x="' + b.x + '" data-y="' + b.y + '" data-id="' + b.id + '">' +
+            '<span class="o-name">Trafo ' + t.name + (count > 1 ? ' ' + count + '×' : '') +
+            ' <span class="dim">[' + b.x + ',' + b.y + ']</span></span>' +
+            '<span class="o-val">' + Math.round(lo * t.cap * count) + ' / ' + (t.cap * count) + ' MW</span>' +
+            loadCell(lo) + loadState(lo) + '</div>', lo);
+        }
+      }
+    }
+
+    // --- města: kandidáti na městskou dopravu i přehled napájení ---
+    if (all || filter === 'city' || bad) {
       map.cities.forEach((c, i) => {
         const dark = (c.powered || 0) < 0.5;
-        if (filter === 'bad' && !dark) return;
+        if (bad && !dark) return;
         const tr = sim.transitList(c).map((k) => EG.TRANSIT[k].ico).join('') || '<span class="dim">bez MHD</span>';
         const state = dark ? '<span class="bad">nesvítí</span>'
           : c.transitDown ? '<span class="warn">MHD stojí</span>'
           : '<span class="dim">ok</span>';
-        rows.push('<div class="obj-row" data-x="' + c.x + '" data-y="' + c.y + '" data-city="' + i + '">' +
+        add('<div class="obj-row" data-x="' + c.x + '" data-y="' + c.y + '" data-city="' + i + '">' +
           '<span class="o-name">' + c.name + ' [' + c.x + ',' + c.y + ']</span>' +
-          '<span>' + c.pop + ' tis. ' + tr + '</span>' + state + '</div>');
+          '<span class="o-val">' + c.pop + ' tis. ' + tr + '</span>' +
+          '<span class="o-load"></span>' + state + '</div>');
       });
     }
-    $('#objlist-rows').innerHTML = rows.join('') ||
-      '<div class="dim" style="padding:6px">Nic tu není.</div>';
+
+    if (load) rows.sort((p, q) => q.load - p.load);
+    $('#objlist-rows').innerHTML = rows.map((r) => r.html).join('') ||
+      '<div class="dim" style="padding:6px">' +
+      (load ? 'Zatím nic, co by se dalo zatížit – postav vedení a trafa.' : 'Nic tu není.') +
+      '</div>';
   }
 
   /* ---------- mapa podle skutečné krajiny ----------
@@ -1871,6 +1984,10 @@
     $('#spot').style.color = (sim.spotK || 1) > 1.25 ? '#f0c040' : '';
     $('#debt-item').hidden = !(sim.debt > 0);
     if (sim.debt > 0) $('#debt').textContent = Math.round(sim.debt).toLocaleString('cs-CZ') + ' €';
+    // kolik vedení a traf zrovna nestíhá; klikem se otevře přehled zatížení
+    const over = countOverloads();
+    $('#overload-item').hidden = over === 0;
+    $('#overload').textContent = over;
     updateTaxHud();
     if (sim.gameOver && $('#gameover').hidden) {
       $('#gameover').hidden = false;

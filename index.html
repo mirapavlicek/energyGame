@@ -27,6 +27,7 @@
       <span class="hud-item" id="debt-item" title="Dluh (úrok 10 %/rok)" hidden>💳 <b id="debt">0 €</b></span>
       <span class="hud-item" id="tax-item" title="Hospodářský výsledek za rozjetý rok a odhad daní">🧾 <b id="tax">0 €</b></span>
       <span class="hud-item" title="Skóre">★ <b id="score">0</b></span>
+      <span class="hud-item" id="overload-item" title="Přetížená vedení a trafa – klikni pro přehled zatížení" hidden>⚠ <b id="overload">0</b></span>
       <span class="hud-item" id="fps-item" title="Snímky za sekundu">🎞 <b id="fps">60</b></span>
       <span class="hud-item" id="clock">06:00</span>
     </div>
@@ -107,8 +108,10 @@
       <b>Objekty</b>
       <select id="objlist-filter">
         <option value="all">vše</option>
+        <option value="load">zatížení – nejhorší nahoře</option>
         <option value="gen">elektrárny</option>
         <option value="sub">rozvodny</option>
+        <option value="line">vedení</option>
         <option value="stor">zásobníky</option>
         <option value="city">města</option>
         <option value="bad">problémové</option>

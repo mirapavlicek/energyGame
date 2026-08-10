@@ -284,7 +284,28 @@ stínové kopii – vidíš průběžnou cenu plánu a zaplatíš až po potvrze
 zaznamenává akce, takže jde celá seance přehrát od začátku 8× rychle.
 N-1 analýza počítá ve **Web Workeru**, ať se render nezasekne.
 
-HUD navíc nabízí: 📋 seznam objektů s filtrem (včetně měst a jejich MHD),
+### Přehled zatížení
+
+📋 v HUD otevře seznam objektů a jeho filtr **„zatížení – nejhorší nahoře"**
+je odpověď na otázku, co ve tvé síti stíhá a co už ne. Vypíše všechna
+**vedení** a **trafa** seřazená podle vytížení, u každého skutečný tok
+proti kapacitě (`87 / 30 MW`), barevný proužek a stav:
+
+| Proužek | Stav | Co to znamená |
+| --- | --- | --- |
+| zelený | `ok` | do 75 % kapacity, rezerva je |
+| žlutý | `na hraně` | 75–100 %, špička už se nikam nevejde |
+| červený | `přetíženo` | přes 100 %, soustava tok obchází a hrozí tma |
+
+Klik na řádek skočí kamerou na místo a otevře panel – u vedení rovnou
+se servisem, u trafa jeho rozvodnu, kam se dokoupí další kus. Když je
+něco přetížené, svítí v HUD červené **⚠ s počtem** a kliknutím se přehled
+otevře rovnou na něm. Filtr **problémové** k tomu přidá poruchy, došlé
+palivo, zhasnutá města i elektrárny, které vyrábějí, ale výkon se z nich
+nedostane ven.
+
+HUD navíc nabízí: 📋 seznam objektů s filtrem (elektrárny, rozvodny, vedení,
+zásobníky, města a jejich MHD),
 🗺 mapové vrstvy (dosahy rozvoden / zatížení vedení),
 📈 grafy výroby, dodávky, ztrát a spotové ceny, 💾/📂 uložení a načtení hry,
 💳 úvěr a splátky, N-1 analýzu, 🗓 výzvu dne (společný seed z data) a rekord

@@ -39,7 +39,7 @@ html, body {
 /* seznam objektů */
 #objlist {
   position: absolute; left: 50%; top: 54px; transform: translateX(-50%);
-  width: 460px; max-height: 60vh;
+  width: 580px; max-height: 60vh;
   background: rgba(10, 14, 19, 0.94);
   border: 1px solid #3c4c5c; border-radius: 10px;
   padding: 8px 10px; z-index: 8;
@@ -59,10 +59,29 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 .obj-row:hover { background: rgba(255,255,255,0.08); }
-.obj-row .o-name { flex: 1; }
+.obj-row .o-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obj-row .o-val { flex: none; width: 104px; text-align: right; }
+.obj-row > span:last-child { flex: none; width: 88px; text-align: right; }
 .obj-row .bad { color: #ff6a5a; }
 .obj-row .warn { color: #f0c040; }
 .obj-row .dim { color: #8b98a5; }
+
+#overload-item { cursor: pointer; color: #ff6a5a; }
+#overload-item:hover { background: rgba(255, 255, 255, 0.1); border-radius: 5px; }
+
+/* proužek zatížení: zelená klid, žlutá na hraně, červená přetížení */
+.o-load {
+  position: relative; flex: none; width: 76px; height: 13px;
+  border-radius: 3px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.09);
+}
+.o-load:empty { background: none; }
+.o-load i { position: absolute; left: 0; top: 0; bottom: 0; }
+.o-load b {
+  position: relative; display: block; line-height: 13px; text-align: center;
+  font-size: 10.5px; font-weight: 600; color: #f2f6fa;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.65);
+}
 
 /* import mapy podle skutečné krajiny */
 #import-dlg {

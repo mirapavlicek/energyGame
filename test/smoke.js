@@ -3312,6 +3312,101 @@ const server = http.createServer((req, res) => {
   await page.setViewportSize({ width: 1100, height: 700 });
   await nextFrames(3);
 
+  // --- přehled zatížení: co je v pořádku a co už nestíhá ---
+  const overload = await page.evaluate(() => {
+    const { sim, map } = EG.game;
+    sim.money = 500000;
+    // město s velkým odběrem napájené přes jedno slabé distribuční trafo
+    const c = map.cities.find((o) => !sim.buildings.some((b) => Math.hypot(b.x - o.x, b.y - o.y) < 12))
+      || map.cities[0];
+    c.pop = 55;
+    sim._syncHouses(c);
+    const near = (kind, cx, cy, maxR) => {
+      for (let r = 1; r <= maxR; r++) {
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (sim.canPlace(kind, cx + dx, cy + dy).ok) return sim.place(kind, cx + dx, cy + dy);
+        }
+      }
+      return null;
+    };
+    const sub = near('sub', c.x, c.y, 4);
+    sim.buyTrafo(sub, 't220_110');
+    sim.buyTrafo(sub, 't110_22');
+    sim.buyTrafo(sub, 't22_04'); // 30 MW na město, které chce dvakrát tolik
+    const coal = near('coal', c.x + 10, c.y + 8, 8);
+    const link = coal ? sim.connect(coal, sub, 220) : null;
+    if (coal) sim.setFuelContract(coal, true);
+    for (let i = 0; i < 60; i++) sim.tick(0.2);
+
+    document.getElementById('objlist').hidden = false;
+    const filter = document.getElementById('objlist-filter');
+    filter.value = 'load';
+    filter.dispatchEvent(new Event('change'));
+    const rowsEl = [...document.querySelectorAll('#objlist-rows .obj-row')];
+    const readLoad = (el) => {
+      const b = el.querySelector('.o-load b');
+      return b ? parseInt(b.textContent, 10) : -1;
+    };
+    const loads = rowsEl.map(readLoad);
+    const sorted = loads.every((v, i) => i === 0 || loads[i - 1] >= v);
+    const lineRows = rowsEl.filter((el) => el.dataset.line !== undefined).length;
+    const trafoRows = rowsEl.filter((el) => el.querySelector('.o-name').textContent.startsWith('Trafo')).length;
+    const overRows = rowsEl.filter((el) => el.textContent.includes('přetíženo')).length;
+    const okRows = rowsEl.filter((el) => /\bok\b/.test(el.textContent)).length;
+    // barva proužku podle stavu
+    const worst = rowsEl[0];
+    const worstBar = worst && worst.querySelector('.o-load i');
+    const worstColor = worstBar ? worstBar.style.background : '';
+
+    // klik na řádek vedení otevře panel vedení
+    const lineRow = rowsEl.find((el) => el.dataset.line !== undefined);
+    let linePanel = null;
+    if (lineRow) {
+      lineRow.click();
+      linePanel = document.getElementById('bp-title').textContent;
+    }
+    document.getElementById('objlist').hidden = true;
+
+    return {
+      rows: rowsEl.length, loads: loads.slice(0, 4), sorted,
+      lineRows, trafoRows, overRows, okRows, worstColor, linePanel,
+      linkOk: !!link, coalOut: coal ? +coal.out.toFixed(0) : 0,
+    };
+  });
+  await nextFrames(2);
+  const overloadHud = await page.evaluate(() => {
+    const item = document.getElementById('overload-item');
+    const shown = !item.hidden;
+    item.click(); // zkratka z HUD rovnou do přehledu
+    const open = !document.getElementById('objlist').hidden;
+    const filter = document.getElementById('objlist-filter').value;
+    document.getElementById('objlist-close').click();
+    return { shown, text: document.getElementById('overload').textContent, open, filter };
+  });
+  console.log('přehled zatížení:', JSON.stringify({ ...overload, hud: overloadHud }));
+  if (!overload.linkOk) throw new Error('testovací vedení se nepostavilo');
+  if (!(overload.rows > 3)) throw new Error('přehled zatížení je prázdný: ' + overload.rows);
+  if (!(overload.lineRows > 0)) throw new Error('v přehledu chybí vedení');
+  if (!(overload.trafoRows > 0)) throw new Error('v přehledu chybí trafa');
+  if (!overload.sorted) throw new Error('přehled není seřazený od nejhoršího: ' + JSON.stringify(overload.loads));
+  if (!(overload.loads[0] > 100)) throw new Error('nepovedlo se nic přetížit: ' + overload.loads[0]);
+  if (!(overload.overRows > 0)) throw new Error('přetížený prvek se nehlásí jako přetížený');
+  if (!(overload.okRows > 0)) throw new Error('nic se nehlásí jako v pořádku – přehled má ukázat obojí');
+  if (!overload.worstColor.includes('255, 83, 64')) {
+    throw new Error('nejhorší prvek nemá červený proužek: ' + overload.worstColor);
+  }
+  if (!overload.linePanel || !overload.linePanel.startsWith('Vedení')) {
+    throw new Error('klik na řádek vedení neotevřel jeho panel: ' + overload.linePanel);
+  }
+  if (!overloadHud.shown) throw new Error('HUD nehlásí přetížení');
+  if (+overloadHud.text !== overload.overRows) {
+    throw new Error('počet v HUD nesouhlasí se seznamem: ' + overloadHud.text + ' vs ' + overload.overRows);
+  }
+  if (!overloadHud.open || overloadHud.filter !== 'load') {
+    throw new Error('klik na varování v HUD neotevřel přehled zatížení');
+  }
+
   // --- mapa podle skutečné krajiny: čtení odkazu a výřez ---
   const place = await page.evaluate(() => {
     const p = EG.parsePlace;

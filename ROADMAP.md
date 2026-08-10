@@ -1,7 +1,7 @@
 # ⚡ EnergyGame – roadmapa rozšíření
 
 Zásobník nápadů na další vývoj hry, seskupený do oblastí.
-Všech 78 položek je implementováno (✅), byť některé ve zjednodušené podobě.
+Všech 79 položek je implementováno (✅), byť některé ve zjednodušené podobě.
 
 ## Zdroje a technologie
 
@@ -146,6 +146,12 @@ Všech 78 položek je implementováno (✅), byť některé ve zjednodušené po
 54. ✅ Undo posledního kroku (Ctrl+Z) – – vrácení poslední stavby/demolice.
 55. ✅ Seznam objektů (📋) s filtrem a skokem kamery. Původně: tabulka všech elektráren/rozvoden
     s filtrací (stav, zatížení, smlouvy) a skokem kamery.
+79. ✅ Přehled zatížení – filtr „zatížení – nejhorší nahoře" vypíše všechna
+    vedení a trafa seřazená podle vytížení, s tokem proti kapacitě,
+    barevným proužkem a stavem ok / na hraně / přetíženo. Klik skočí na
+    místo a otevře panel. V HUD svítí ⚠ s počtem přetížených prvků, které
+    je zkratkou rovnou do přehledu. Filtr „problémové" nově hlásí i
+    elektrárny, které vyrábějí, ale výkon se z nich nedostane ven.
 56. ✅ Klikací log (skok na místo problému) – – klikací výstrahy (skok na místo problému),
     prioritizace, ztlumení kategorií.
 57. ✅ Ukládání hry (💾/📂, localStorage) – – save/load do localStorage + export/import souboru.
