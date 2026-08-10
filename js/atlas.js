@@ -16,7 +16,7 @@
     STAR: 24, PIP: 25, NUKE: 26, GASP: 27, GEOTH: 28, BIOG: 29, WASTE: 30, OWIND: 31,
     H2: 32, GEOFIELD: 33, WIND2: 34, OWIND2: 35, TRACT: 36, BESS: 37,
     MPAD: 38, MPACK: 39, MCONV: 40,
-    TROLLEY: 41, TRAM: 42, METRO: 43,
+    TROLLEY: 41, TRAM: 42, METRO: 43, GLOW: 44,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -682,6 +682,19 @@
       diamond(c, AX, AY, HW - 1, HH - 0.5);
       c.strokeStyle = 'rgba(120,200,255,0.9)'; c.lineWidth = 2;
       c.setLineDash([5, 4]); c.stroke();
+    });
+
+    /* Měkká záře pro aditivní vrstvu: rozsvícená okna, běžící stroje.
+       Kreslí se v barvě instance, tady stačí bílý radiální spád. */
+    at(S.GLOW, (c) => {
+      const g = c.createRadialGradient(AX, AY - 10, 0, AX, AY - 10, 30);
+      g.addColorStop(0, 'rgba(255,255,255,1)');
+      g.addColorStop(0.45, 'rgba(255,255,255,0.35)');
+      g.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(AX, AY - 10, 30, 0, Math.PI * 2);
+      c.fill();
     });
 
     return cv;

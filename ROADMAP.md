@@ -1,7 +1,7 @@
 # ⚡ EnergyGame – roadmapa rozšíření
 
 Zásobník nápadů na další vývoj hry, seskupený do oblastí.
-Všech 76 položek je implementováno (✅), byť některé ve zjednodušené podobě.
+Všech 77 položek je implementováno (✅), byť některé ve zjednodušené podobě.
 
 ## Zdroje a technologie
 
@@ -161,6 +161,13 @@ Všech 76 položek je implementováno (✅), byť některé ve zjednodušené po
 62. ✅ Počasí vizuálně (bouřkové tónování, zóny) – – déšť, sníh, bouřkové mraky nad mapou.
 63. ✅ Stavební animace (fade-in výstavby ~3 s). Původně: jeřáb a lešení během výstavby (stavba trvá čas).
 64. ✅ Fotorežim (P) – – skrytí UI a export screenshotu mapy.
+77. ✅ Grafický upgrade na GPU – ořez terénu po diagonálách (z ~104 000
+    dlaždic zbude řádově tisíc) i ořez segmentů vedení, denní světlo
+    a odbarvení za šera přímo v shaderu místo plachty přes obraz,
+    aditivní vrstva nočních světel, bloom přes framebuffer se separabilním
+    gaussem, vyhlazení hran multisamplingem, třpyt hladiny počítaný
+    v pixel shaderu a strop DPR na 2. V HUD přibyl přepínač kvality ✨
+    a ukazatel snímků za sekundu 🎞.
 
 ## Meta a progrese
 

@@ -15,15 +15,6 @@ html, body {
 }
 #game:active { cursor: grabbing; }
 
-/* tónování scény: noc a počasí (řídí updateHUD) */
-#scene-overlay {
-  position: absolute; inset: 0;
-  pointer-events: none;
-  background: #0a1428;
-  opacity: 0;
-  transition: opacity 1s;
-}
-
 /* graf výroby a spotřeby */
 #chart {
   position: absolute; left: 50%; transform: translateX(-50%); bottom: 44px;

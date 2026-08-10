@@ -3150,6 +3150,168 @@ const server = http.createServer((req, res) => {
   }
   if (cityPanel.anyBuilding !== 0) throw new Error('filtr měst vypsal i stavby');
 
+  // --- grafika: ořez terénu, osvětlení, záře a postprocess ---
+  const cullTest = await page.evaluate(() => {
+    const { renderer, sim, map } = EG.game;
+    const iso = EG.iso;
+
+    /* Kolik dlaždic doopravdy padne do výřezu – spočítáno hrubou silou,
+       nezávisle na diagonální matematice v rendereru. Renderer smí
+       nakreslit o kousek víc (zaokrouhlení), ale nikdy ne míň. */
+    const brute = () => {
+      const c = renderer.cull;
+      let n = 0;
+      for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+        const wx = (x - y) * iso.HW, wy = (x + y) * iso.HH;
+        if (wx >= c.x0 && wx <= c.x1 && wy >= c.y0 && wy <= c.y1) n++;
+      }
+      return n;
+    };
+
+    const sample = (zoom) => {
+      renderer.cam.zoom = zoom;
+      renderer.render(0);
+      return { zoom, drawn: renderer.stats.terrain, need: brute() };
+    };
+
+    // kamera doprostřed mapy, ať je výřez plný souše i vody
+    const [wx, wy] = renderer.tileToWorld(map.size / 2, map.size / 2);
+    renderer.cam.x = wx; renderer.cam.y = wy;
+    const near = sample(1.5);
+    const mid = sample(0.9);
+    const far = sample(0.35);
+
+    // roh mapy: ořez nesmí sáhnout mimo pole diagonál
+    renderer.cam.x = 0; renderer.cam.y = 0;
+    const corner = sample(0.9);
+    renderer.cam.x = wx; renderer.cam.y = wy;
+    renderer.cam.zoom = 1.2;
+
+    return {
+      total: renderer.stats.terrainTotal,
+      near, mid, far, corner,
+      samples: renderer.samples,
+      maxDpr: EG.MAX_DPR,
+      canvasW: renderer.canvas.width,
+      clientW: renderer.canvas.clientWidth,
+    };
+  });
+  console.log('grafika – ořez terénu:', JSON.stringify(cullTest));
+  if (cullTest.total < 10000) throw new Error('mapa nemá čím zahltit GPU: ' + cullTest.total);
+  for (const s of [cullTest.near, cullTest.mid, cullTest.far, cullTest.corner]) {
+    if (s.drawn < s.need) {
+      throw new Error('ořez zahodil viditelné dlaždice při zoomu ' + s.zoom + ': ' +
+        s.drawn + ' < ' + s.need);
+    }
+    if (s.drawn > s.need * 3 + 3000) {
+      throw new Error('ořez skoro nic neušetřil při zoomu ' + s.zoom + ': ' + s.drawn + ' vs ' + s.need);
+    }
+  }
+  if (!(cullTest.near.drawn < cullTest.total / 20)) {
+    throw new Error('při přiblížení se pořád kreslí celá mapa: ' + cullTest.near.drawn + ' z ' + cullTest.total);
+  }
+  if (!(cullTest.far.drawn > cullTest.near.drawn)) throw new Error('oddálení nepřidalo dlaždice');
+  if (cullTest.canvasW > cullTest.clientW * cullTest.maxDpr + 1) {
+    throw new Error('plátno ignoruje strop DPR: ' + cullTest.canvasW + ' px na ' + cullTest.clientW + ' CSS px');
+  }
+
+  // osvětlení: den je světlý a barevný, noc tmavá, modrá a odbarvená
+  // (kamera musí koukat na stavbu, jinak není co rozsvěcet)
+  const litSpot = await page.evaluate(() => {
+    const { sim, renderer } = EG.game;
+    const b = sim.buildings.find((o) => o.kind === 'sub') || sim.buildings[0];
+    if (!b) return null;
+    const [wx, wy] = renderer.tileToWorld(b.x, b.y);
+    renderer.cam.x = wx; renderer.cam.y = wy; renderer.cam.zoom = 1.2;
+    return { x: b.x, y: b.y, kind: b.kind };
+  });
+  if (!litSpot) throw new Error('v živé hře není žádná stavba k osvětlení');
+
+  /* Světlo se přepočítá až v dalším snímku – pod softwarovým rasterizérem
+     může snímek trvat i desetinu sekundy, takže se čeká na počítadlo
+     snímků, ne na pevný časový úsek. */
+  const nextFrames = async (n) => {
+    const from = await page.evaluate(() => EG.game.renderer.frame);
+    await page.waitForFunction(
+      ({ f, k }) => EG.game.renderer.frame >= f + k, { f: from, k: n }, { timeout: 20000 });
+  };
+
+  const atHour = async (h) => {
+    await page.evaluate((hh) => {
+      const { sim } = EG.game;
+      const phase = ((hh - 6 + 24) % 24) / 24;
+      sim.time = Math.floor(sim.time / sim.dayLen) * sim.dayLen + sim.dayLen * phase;
+      sim.tick(0.001);
+    }, h);
+    await nextFrames(2);
+    return page.evaluate(() => ({
+      light: JSON.parse(JSON.stringify(EG.game.renderer.light)),
+      clear: EG.game.renderer.clearColor.slice(),
+      glows: EG.game.renderer.stats.glows,
+      sun: +(EG.game.sim.sun || 0).toFixed(2),
+    }));
+  };
+  const noon = await atHour(13);
+  const night = await atHour(2);
+  console.log('grafika – osvětlení:', JSON.stringify({ spot: litSpot, noon, night }));
+  if (!(noon.sun > 0.8)) throw new Error('v poledne nesvítí slunce: ' + noon.sun);
+  if (night.sun !== 0) throw new Error('ve dvě ráno svítí slunce: ' + night.sun);
+  if (!(night.light.r < noon.light.r * 0.6)) {
+    throw new Error('noc není tmavší než poledne: ' + night.light.r + ' vs ' + noon.light.r);
+  }
+  if (!(night.light.b > night.light.r)) throw new Error('noc není do modra: ' + JSON.stringify(night.light));
+  if (!(night.light.desat > 0.4) || !(noon.light.desat < 0.05)) {
+    throw new Error('odbarvení za šera nefunguje: ' + night.light.desat + ' / ' + noon.light.desat);
+  }
+  if (!(night.clear[2] < noon.clear[2])) throw new Error('noční obloha není tmavší');
+  if (!(night.glows > 0)) throw new Error('v noci se nerozsvítilo jediné světlo');
+  if (noon.glows !== 0) throw new Error('v poledne svítí noční světla: ' + noon.glows);
+
+  // přepínač kvality: nízká vypne postprocess a uvolní cíle vykreslování
+  const quality = await page.evaluate(async () => {
+    const { renderer } = EG.game;
+    const btn = document.getElementById('btn-gfx');
+    const before = renderer.quality;
+    const hadTargets = !!renderer.targets;
+    btn.click();
+    const low = renderer.quality;
+    const freed = renderer.targets === null;
+    renderer.render(0);
+    const drawsLow = renderer.stats.draws;
+    btn.click();
+    const back = renderer.quality;
+    renderer.render(0);
+    const drawsHigh = renderer.stats.draws;
+    let stored = null;
+    try { stored = localStorage.getItem('eg_gfx'); } catch (e) { /* ignoruj */ }
+    return { before, hadTargets, low, freed, back, drawsLow, drawsHigh, stored,
+      targetsBack: !!renderer.targets, active: btn.classList.contains('active') };
+  });
+  console.log('grafika – kvalita:', JSON.stringify(quality));
+  if (quality.before !== 'high' || quality.low !== 'low' || quality.back !== 'high') {
+    throw new Error('přepínač kvality nepřepíná: ' + JSON.stringify(quality));
+  }
+  if (!quality.hadTargets || !quality.freed) throw new Error('nízká kvalita neuvolnila framebuffery');
+  if (!quality.targetsBack) throw new Error('vysoká kvalita si framebuffery nevyrobila zpět');
+  if (!(quality.drawsHigh > quality.drawsLow)) {
+    throw new Error('vysoká kvalita nepřidala postprocess: ' + quality.drawsHigh + ' vs ' + quality.drawsLow);
+  }
+  if (quality.stored !== 'high' || !quality.active) throw new Error('volba kvality se nepamatuje');
+
+  // změna velikosti okna musí cíle vykreslování přestavět, ne rozbít
+  await page.setViewportSize({ width: 900, height: 620 });
+  await nextFrames(3);
+  const resized = await page.evaluate(() => ({
+    w: EG.game.renderer.targets && EG.game.renderer.targets.w,
+    canvasW: EG.game.renderer.canvas.width,
+    terrain: EG.game.renderer.stats.terrain,
+  }));
+  console.log('grafika – změna velikosti:', JSON.stringify(resized));
+  if (resized.w !== resized.canvasW) throw new Error('framebuffery neodpovídají plátnu po změně velikosti');
+  if (!(resized.terrain > 0)) throw new Error('po změně velikosti se nekreslí terén');
+  await page.setViewportSize({ width: 1100, height: 700 });
+  await nextFrames(3);
+
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {
     const { sim, map, renderer } = EG.game;

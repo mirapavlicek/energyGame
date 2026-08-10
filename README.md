@@ -267,6 +267,7 @@ rok. HUD ukazuje 🧾 rozjetý hospodářský výsledek a v popisku i odhad odvo
 | napsat `funds` | cheat: +1 000 € |
 | `Ctrl+Z` | vrátit poslední stavbu/vedení (plná vratka) |
 | `P` | fotorežim (schová UI) |
+| ✨ v HUD | kvalita grafiky (bloom, třpyt hladiny, vyhlazení hran) |
 | klik na hlášku v logu | skok kamerou na místo (`[x,y]`) |
 
 **Vedení stárne** provozem (klik na linku v režimu prohlížení otevře jeho
@@ -308,11 +309,41 @@ python3 -m http.server 8000
 
 Konkrétní mapu lze sdílet přes URL: `index.html?seed=123456`.
 
+## Grafika
+
+Renderer stojí na WebGL2 a snaží se nechat práci na grafické kartě, ne na
+procesoru. Tlačítko ✨ v HUD přepíná mezi **vysokou a nízkou kvalitou**
+(volba se pamatuje); v HUD je taky ukazatel 🎞 snímků za sekundu, jehož
+popisek prozradí, kolik dlaždic terénu se z mapy opravdu kreslí.
+
+- **Ořez terénu.** Mapa má přes 100 000 dlaždic, ale do bufferu jsou uložené
+  po diagonálách (x+y), takže viditelný výřez je vždycky souvislý úsek –
+  a uvnitř diagonály navíc klesá vodorovná souřadnice, takže i vodorovné
+  okno je souvislé. Místo celé mapy se tak kreslí řádově tisíc dlaždic.
+  Stejně se ořezávají i segmenty vedení, aby železniční koridory přes celou
+  mapu nezatěžovaly GPU mimo obraz.
+- **Denní světlo řeší shader.** Poledne je skoro bílé, svítání a soumrak
+  táhnou do oranžova, noc je tmavě modrá a odbarvená (oko za šera barvy
+  nerozezná), bouřka sebere jas i kontrast. Dřív to byla poloprůhledná
+  plachta přes celý obraz – teď se tónuje jen scéna, ne UI.
+- **Světla v noci.** Napájená města, provozy a běžící stroje se rozsvěcí
+  aditivní vrstvou záře; zhasnuté město zůstane tmavé.
+- **Bloom.** Ve vysoké kvalitě jde obraz přes framebuffer: jasné pixely se
+  vytáhnou prahem, rozmažou separabilním gaussem ve čtvrtinovém rozlišení
+  a přičtou zpět. Rozzáří to noční okna i energetické pakety ve vedení.
+- **Vyhlazení hran** multisamplovaným framebufferem (4× vzorky, pokud je
+  karta umí) – bez něj by šikmá vedení kostrbatila.
+- **Třpyt hladiny** počítají dvě interferující vlny ve fragment shaderu,
+  žádná animovaná textura.
+- **Strop DPR na 2** – na telefonu s trojnásobným displejem by se jinak
+  počítalo devětkrát víc pixelů, než je vidět.
+
 ## Technika
 
 - **WebGL2** – celá scéna instancovaně: statický buffer terénu (~104 000 dlaždic
-  nahraných jednou), dynamický buffer budov/kurzorů, vedení jako instancované
-  segmenty s animovanými „pakety" energie ve fragment shaderu.
+  nahraných jednou, kreslí se z něj jen viditelný výřez), dynamický buffer
+  budov/kurzorů, aditivní vrstva záře a vedení jako instancované segmenty
+  s animovanými „pakety" energie ve fragment shaderu.
 - **Sprite atlas** se generuje procedurálně do canvasu při startu – repozitář
   neobsahuje žádné binární assety.
 - Deterministický RNG (mulberry32) + hodnotový fBm šum pro terén.

@@ -16,7 +16,6 @@
 </head>
 <body>
   <canvas id="game"></canvas>
-  <div id="scene-overlay"></div>
 
   <header id="hud">
     <div class="hud-group">
@@ -28,6 +27,7 @@
       <span class="hud-item" id="debt-item" title="Dluh (úrok 10 %/rok)" hidden>💳 <b id="debt">0 €</b></span>
       <span class="hud-item" id="tax-item" title="Hospodářský výsledek za rozjetý rok a odhad daní">🧾 <b id="tax">0 €</b></span>
       <span class="hud-item" title="Skóre">★ <b id="score">0</b></span>
+      <span class="hud-item" id="fps-item" title="Snímky za sekundu">🎞 <b id="fps">60</b></span>
       <span class="hud-item" id="clock">06:00</span>
     </div>
     <div class="hud-group">
@@ -40,6 +40,7 @@
       <button id="btn-objlist" class="hud-btn" title="Seznam objektů (elektrárny, rozvodny, zásobníky)">📋</button>
       <button id="btn-layer" class="hud-btn" title="Mapové vrstvy: dosahy rozvoden / zatížení vedení">🗺</button>
       <button id="btn-chart" class="hud-btn" title="Grafy výroby a spotřeby">📈</button>
+      <button id="btn-gfx" class="hud-btn" title="Kvalita grafiky">✨</button>
       <button id="btn-save" class="hud-btn" title="Uložit hru (localStorage)">💾</button>
       <button id="btn-load" class="hud-btn" title="Načíst uloženou hru">📂</button>
       <button id="btn-speed" class="hud-btn">▶ 1×</button>

@@ -40,8 +40,22 @@
   const history = [];          // vzorky pro grafy (výroba/spotřeba/ztráty/spot)
   let lastSample = 0;
   const undoStack = [];        // undo posledních staveb (Ctrl+Z)
+  let gfxQuality = 'high';     // vysoká = bloom, třpyt hladiny a multisampling
+  let fps = 60;                // vyhlazené snímky za sekundu do HUD
 
   const $ = (s) => document.querySelector(s);
+
+  /* Kvalita grafiky: na slabším železe se dá vypnout postprocess.
+     Volba se pamatuje mezi seancemi. */
+  function setQuality(q, quiet) {
+    gfxQuality = renderer.setQuality(q);
+    const high = gfxQuality === 'high';
+    $('#btn-gfx').classList.toggle('active', high);
+    $('#btn-gfx').title = 'Kvalita grafiky: ' + (high ? 'vysoká' : 'nízká') +
+      ' (bloom, třpyt hladiny a vyhlazení hran) – klikni pro přepnutí';
+    try { localStorage.setItem('eg_gfx', gfxQuality); } catch (e) { /* ignoruj */ }
+    if (!quiet) sim.msg('✨ Kvalita grafiky: ' + (high ? 'vysoká' : 'nízká'));
+  }
 
   /* Vítr v HUD: rychlost v m/s a co znamená pro turbíny. Rychlost je
      důležitější než procenta – z ní je vidět, proč turbíny stojí. */
@@ -81,6 +95,9 @@
     const tintFn = (x, y) => 0.88 + Math.min(0.24, Math.max(0, map.elev[map.idx(x, y)] - 0.3) * 0.55);
     EG.onTerrainChanged = () => renderer.uploadTerrain(map, tintFn);
     renderer.uploadTerrain(map, tintFn);
+    let savedGfx = 'high';
+    try { savedGfx = localStorage.getItem('eg_gfx') || 'high'; } catch (e) { /* ignoruj */ }
+    setQuality(savedGfx, true);
 
     // kamera do středu první osady
     const c0 = map.cities[0] || { x: MAP_SIZE / 2, y: MAP_SIZE / 2 };
@@ -105,6 +122,7 @@
       chartOn = !chartOn;
       $('#chart').hidden = !chartOn;
     });
+    $('#btn-gfx').addEventListener('click', () => setQuality(gfxQuality === 'high' ? 'low' : 'high'));
     $('#btn-save').addEventListener('click', () => {
       try {
         localStorage.setItem('eg_save', EG.serialize(sim));
@@ -1743,10 +1761,13 @@
       updateSpeedLabel();
     }
 
-    // tónování scény: noc ztmavuje, bouřka přidává těžké mraky
-    const night = Math.max(0, 0.38 * (1 - Math.min(1, (sim.sun || 0) * 3)));
-    const stormy = (sim.activeEvents && sim.activeEvents('storm').length > 0) ? 0.16 : 0;
-    $('#scene-overlay').style.opacity = Math.min(0.5, night + stormy).toFixed(2);
+    // snímky za sekundu a kolik dlaždic terénu se z mapy opravdu kreslí
+    const rs = renderer.stats;
+    $('#fps').textContent = Math.round(fps);
+    $('#fps').style.color = fps < 30 ? '#ff6a5a' : fps < 50 ? '#f0c040' : '';
+    $('#fps-item').title = 'Snímky za sekundu · terén ' + rs.terrain.toLocaleString('cs-CZ') +
+      ' z ' + rs.terrainTotal.toLocaleString('cs-CZ') + ' dlaždic · sprity ' + rs.sprites +
+      ' · záře ' + rs.glows + ' · vedení ' + rs.lines + ' · kreslení ' + rs.draws + '×';
     $('#income').textContent = (st.income >= 0 ? '+' : '') + (st.income * 60).toFixed(1) + '/min';
     $('#score').textContent = Math.floor(sim.score).toLocaleString('cs-CZ');
     const best = updateRecord();
@@ -1771,9 +1792,68 @@
     }
   }
 
+  /* ---------- osvětlení scény ----------
+     Barvu dne řeší shader, ne plachta přes celý obraz: poledne je skoro
+     bílé, svítání a soumrak táhnou do oranžova, noc je tmavě modrá a
+     skoro bez barev (oko za šera barvy nerozezná). Bouřka sebere jas
+     i kontrast. Vrací „temnotu" 0..1 pro rozsvěcení světel. */
+  const LIGHT_NIGHT = [0.34, 0.42, 0.66];
+  const LIGHT_DUSK = [1.06, 0.74, 0.52];
+  const LIGHT_DAY = [1.00, 1.00, 0.98];
+  const SKY_NIGHT = [0.03, 0.05, 0.10];
+  const SKY_DAY = [0.09, 0.12, 0.16];
+
+  const mix3 = (a, b, t) => [
+    a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t,
+  ];
+
+  function applySceneLight() {
+    const sun = Math.max(0, Math.min(1, sim.sun || 0));
+    const storm = (sim.activeEvents && sim.activeEvents('storm').length > 0) ? 1 : 0;
+    const col = sun < 0.22
+      ? mix3(LIGHT_NIGHT, LIGHT_DUSK, sun / 0.22)
+      : mix3(LIGHT_DUSK, LIGHT_DAY, Math.min(1, (sun - 0.22) / 0.45));
+    const dim = 1 - 0.28 * storm;
+    const desat = Math.min(0.85, 0.55 * (1 - Math.min(1, sun * 3)) + 0.3 * storm);
+    renderer.setLight(col[0] * dim, col[1] * dim, col[2] * dim, desat);
+    const sky = mix3(SKY_NIGHT, SKY_DAY, Math.min(1, sun * 2));
+    renderer.setClearColor(sky[0], sky[1], sky[2]);
+    return 1 - Math.min(1, sun * 2.6);
+  }
+
+  /* Noční světla: rozsvícená okna napájených měst, provozy průmyslu
+     a běžící stroje. Kreslí se aditivně, takže je bloom rozzáří. */
+  function pushNightLights(night) {
+    if (night < 0.03) return;
+    for (const c of map.cities) {
+      const lit = Math.min(1, (c.powered || 0) * 1.6);
+      if (lit < 0.15) continue;
+      const a = night * lit;
+      renderer.pushGlow(c.x, c.y, S.GLOW, 1.0, 0.88, 0.62, 0.6 * a);
+      for (const [hx, hy] of c.houses) {
+        if (hx === c.x && hy === c.y) continue;
+        renderer.pushGlow(hx, hy, S.GLOW, 1.0, 0.85, 0.58, 0.24 * a);
+      }
+    }
+    for (const ind of map.industries || []) {
+      const lit = Math.min(1, (ind.powered || 0) * 1.6);
+      if (lit < 0.15) continue;
+      renderer.pushGlow(ind.x, ind.y, S.GLOW, 0.85, 0.93, 1.0, 0.42 * night * lit);
+    }
+    for (const b of sim.buildings) {
+      if (b.broken || b.mothball) continue;
+      if (b.kind === 'sub') {
+        renderer.pushGlow(b.x, b.y, S.GLOW, 0.9, 0.95, 1.0, 0.3 * night);
+      } else if (b.out > 0.5) {
+        renderer.pushGlow(b.x, b.y, S.GLOW, 1.0, 0.92, 0.7, 0.38 * night);
+      }
+    }
+  }
+
   /* ---------- vykreslení scény ---------- */
   function pushScene() {
     renderer.beginDynamic();
+    const night = applySceneLight();
     const id2b = new Map();
     for (const b of sim.buildings) id2b.set(b.id, b);
 
@@ -2057,6 +2137,8 @@
         renderer.pushSprite(ind.x, ind.y, S.BAD, 1, 1, 1, 0.2 + 0.45 * blink);
       }
     }
+
+    pushNightLights(night);
   }
 
   /* ---------- smyčka ---------- */
@@ -2064,6 +2146,7 @@
   function loop(t) {
     const dt = Math.min(0.1, (t - lastT) / 1000 || 0.016);
     lastT = t;
+    if (dt > 0) fps += (1 / dt - fps) * 0.08;
     if (replaying) stepReplay(dt);
     else if (speed > 0 && !sim.gameOver) sim.tick(dt * speed);
     // vzorky pro grafy (1× za herní sekundu)
