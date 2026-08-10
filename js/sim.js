@@ -1036,7 +1036,22 @@
     if (c.pop < def.minPop) {
       return { ok: false, why: def.name + ': málo obyvatel (' + c.pop + ' tis., potřeba ' + def.minPop + ')' };
     }
+    if (!this.tractionSubOf(c)) {
+      return { ok: false, why: 'Trakční měnírna se napájí z vysokého napětí – ' +
+        'rozvodna v dosahu musí mít přípojnici 22 nebo 11 kV' };
+    }
     return { ok: true };
+  };
+
+  /* Trakční měnírna visí na vysokém napětí, ne na domovní síti: hledá se
+     rozvodna v dosahu města, která má VN přípojnici (22 nebo 11 kV). */
+  Sim.prototype.tractionSubOf = function (c) {
+    for (const b of this.buildings) {
+      if (b.kind !== 'sub') continue;
+      if (Math.hypot(b.x - c.x, b.y - c.y) > this.subRange(b)) continue;
+      if (this.supportsLevel(b, 22) || this.supportsLevel(b, 11)) return b;
+    }
+    return null;
   };
 
   Sim.prototype.buyTransit = function (c, key) {
@@ -1137,23 +1152,30 @@
     };
   };
 
-  /* Odvod na konci roku. Na daně se peníze najdou vždycky – nedoplatek
-     pokryje provozní úvěr, který ovšem začne nabíhat úroky. */
+  /* Odvod na konci roku. Během roku se platí zálohy podle loňské
+     povinnosti, na Silvestra se doúčtuje jen rozdíl (přeplatek se vrací).
+     Na daně se peníze najdou vždycky – nedoplatek pokryje provozní úvěr,
+     který ovšem začne nabíhat úroky. */
   Sim.prototype._payTaxes = function (yearIdx) {
     const r = this.taxReport(yearIdx);
+    const advance = this.taxAdvance || 0;
+    r.advance = advance;
+    r.due = r.total - advance;
     this.taxLosses = r.losses;
     this.taxBaseHistory = r.history;
     this.lastTax = r;
     this.yearProfit = 0;
-    this.money -= r.total;
+    this.taxAdvance = 0;
+    this.money -= r.due;
     const eur = (v) => Math.round(v).toLocaleString('cs-CZ');
     this.msg('🧾 Přiznání za rok ' + yearIdx + ': zisk ' + eur(r.profit) + ' € − odpisy ' +
       eur(r.depreciation) + ' €' + (r.lossUsed > 0.5 ? ' − ztráta minulých let ' + eur(r.lossUsed) + ' €' : '') +
       ' → základ ' + eur(r.base) + ' €');
     this.msg('🧾 Odvody: daň z příjmu ' + eur(r.incomeTax) + ' €' +
       (r.windfall > 0.5 ? ' + windfall daň ' + eur(r.windfall) + ' €' : '') +
-      ' + z majetku ' + eur(r.property) + ' € + licence ' + eur(r.license) + ' € = −' +
-      eur(r.total) + ' €', 'warn');
+      ' + z majetku ' + eur(r.property) + ' € + licence ' + eur(r.license) + ' € = ' +
+      eur(r.total) + ' €; zálohy ' + eur(advance) + ' € → ' +
+      (r.due >= 0 ? 'doplatek −' + eur(r.due) : 'přeplatek +' + eur(-r.due)) + ' €', 'warn');
     if (this.money < 0 && !this.gameOver) {
       const need = Math.ceil(-this.money);
       this.debt = (this.debt || 0) + need;
@@ -2349,9 +2371,13 @@
     const income = cityIncome + indIncome + fareIncome + reservePay
       + xIncome - xCost - xPenalty - dataPenalty - interest;
     const net = income - upkeep * inflK * 0.01;
-    this.money += net * dt;
     // hospodářský výsledek za rozjetý rok – z něj se na Silvestra počítá daň
     this.yearProfit = (this.yearProfit || 0) + net * dt;
+    // zálohy na daň podle loňské povinnosti; daň sama není provozním
+    // nákladem, takže odchází z pokladny, ale nesnižuje daňový základ
+    const advance = (this.lastTax ? this.lastTax.total : 0) / yearLenS;
+    this.taxAdvance = (this.taxAdvance || 0) + advance * dt;
+    this.money += (net - advance) * dt;
     this.score += (delivered + exported) * dt * 0.01;
 
     // bankrot: hluboko v minusu hra končí
@@ -2373,7 +2399,7 @@
       overloaded, overloadedTrafos,
       unpowered: cityAssign.filter((ca) => (ca.demand > 0 && (ca.served / ca.demand) < 0.5)).length +
         indAssign.filter((ia) => (ia.demand > 0 && (ia.served / ia.demand) < 0.5)).length,
-      income: net,
+      income: net - advance, taxAdvance: advance,
     };
     this.cityAssign = cityAssign;
     this.indAssign = indAssign;
@@ -2424,6 +2450,7 @@
         noiseT: sim._noiseT,
         // daně: rozjetý hospodářský výsledek, neuplatněné ztráty a poslední přiznání
         yearProfit: sim.yearProfit || 0,
+        taxAdvance: sim.taxAdvance || 0,
         taxLosses: sim.taxLosses || [],
         taxBaseHistory: sim.taxBaseHistory || [],
         lastTax: sim.lastTax || null,
@@ -2469,6 +2496,7 @@
     sim.nextId = d.sim.nextId;
     sim._noiseT = d.sim.noiseT;
     sim.yearProfit = d.sim.yearProfit || 0;
+    sim.taxAdvance = d.sim.taxAdvance || 0;
     sim.taxLosses = Array.isArray(d.sim.taxLosses) ? d.sim.taxLosses : [];
     sim.taxBaseHistory = Array.isArray(d.sim.taxBaseHistory) ? d.sim.taxBaseHistory : [];
     sim.lastTax = d.sim.lastTax || null;

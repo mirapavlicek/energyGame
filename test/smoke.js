@@ -2691,6 +2691,20 @@ const server = http.createServer((req, res) => {
     const c = map.cities[0];
     const atH = (h) => ((h - 6 + 24) % 24) / 24; // hodina -> fáze dne
 
+    // trakční měnírna chce VN: bez rozvodny s 22 kV to nejde
+    c.pop = 30;
+    const noSubRejected = sim.canBuyTransit(c, 'trolley');
+    let sub = null;
+    for (let r = 1; r <= 4 && !sub; r++) {
+      for (let dy = -r; dy <= r && !sub; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+      }
+    }
+    const nnOnlyRejected = sim.canBuyTransit(c, 'trolley'); // rozvodna zatím jen s NN
+    sim.buyTrafo(sub, 't110_22');
+    const withVnOk = sim.canBuyTransit(c, 'trolley').ok;
+
     // podmínky stavby: velikost města a návaznost systémů
     c.pop = 6;
     const smallRejected = !sim.canBuyTransit(c, 'trolley').ok;
@@ -2754,6 +2768,8 @@ const server = http.createServer((req, res) => {
 
     return {
       smallRejected,
+      noSubRejected: noSubRejected.ok === false && /VN|22/.test(noSubRejected.why),
+      nnOnlyRejected: nnOnlyRejected.ok === false, withVnOk,
       tramNeedsTrolley: tramNeedsTrolley.ok === false && /trolejbus/i.test(tramNeedsTrolley.why),
       metroNeedsTram: metroNeedsTram.ok === false,
       costSmall, costBig, costGrows: costBig > costSmall,
@@ -2768,6 +2784,9 @@ const server = http.createServer((req, res) => {
     };
   });
   console.log('městská doprava:', JSON.stringify(mhd));
+  if (!mhd.noSubRejected) throw new Error('trakce se postaví i bez rozvodny v dosahu');
+  if (!mhd.nnOnlyRejected) throw new Error('trakční měnírna se spokojila s pouhým NN');
+  if (!mhd.withVnOk) throw new Error('trakce nejde postavit ani s VN přípojnicí');
   if (!mhd.smallRejected) throw new Error('trolejbusy jdou postavit i v malé vsi');
   if (!mhd.tramNeedsTrolley) throw new Error('tramvaj nevyžaduje trolejbusy');
   if (!mhd.metroNeedsTram) throw new Error('metro nevyžaduje tramvaje');
@@ -2945,13 +2964,34 @@ const server = http.createServer((req, res) => {
     const historyKept = sim.taxBaseHistory.length === 1;
     const taxMsg = sim.messages.some((m) => m.text.includes('Přiznání za rok 7'));
 
+    // zálohy zaplacené během roku se od doplatku odečtou
+    sim.taxLosses = [];
+    sim.taxBaseHistory = [];
+    sim.yearProfit = 10000;
+    sim.money = 50000;
+    sim.taxAdvance = 900;
+    const withAdvance = sim._payTaxes(8);
+    const advanceOk = Math.abs(withAdvance.due - (withAdvance.total - 900)) < 0.01 &&
+      Math.abs(50000 - sim.money - withAdvance.due) < 0.01;
+    const advanceReset = sim.taxAdvance === 0;
+
+    // přeplatek na zálohách se vrátí zpátky do pokladny
+    sim.taxLosses = [];
+    sim.taxBaseHistory = [];
+    sim.yearProfit = -1000;
+    sim.money = 1000;
+    sim.taxAdvance = 5000;
+    const refund = sim._payTaxes(9);
+    const refundOk = refund.due < 0 && sim.money > 1000;
+
     // nedoplatek pokryje provozní úvěr, hráč nespadne rovnou do mínusu
     sim.taxBaseHistory = [];
     sim.taxLosses = [];
     sim.yearProfit = 20000;
     sim.money = 10;
     sim.debt = 0;
-    sim._payTaxes(8);
+    sim.taxAdvance = 0;
+    sim._payTaxes(10);
     const rescuedByLoan = sim.money >= 0 && sim.debt > 0;
 
     return {
@@ -2962,6 +3002,7 @@ const server = http.createServer((req, res) => {
       spikeWindfall: Math.round(rSpike.windfall),
       normalFrom: Math.round(normalFrom), hardFrom: Math.round(hardFrom),
       chargedOk, profitReset, historyKept, taxMsg, rescuedByLoan,
+      advanceOk, advanceReset, refundOk, refundDue: Math.round(refund.due),
       total: Math.round(paid.total),
     };
   });
@@ -2990,6 +3031,9 @@ const server = http.createServer((req, res) => {
   if (!dane.profitReset) throw new Error('hospodářský výsledek se po uzávěrce nevynuloval');
   if (!dane.historyKept) throw new Error('daňová historie se nezapsala');
   if (!dane.taxMsg) throw new Error('chybí hlášení o daňovém přiznání');
+  if (!dane.advanceOk) throw new Error('zálohy se od doplatku neodečetly');
+  if (!dane.advanceReset) throw new Error('zálohy se po uzávěrce nevynulovaly');
+  if (!dane.refundOk) throw new Error('přeplatek na zálohách se nevrátil: doplatek ' + dane.refundDue);
   if (!dane.rescuedByLoan) throw new Error('nedoplatek nepokryl provozní úvěr');
 
   // --- uzávěrka běží na přelomu roku a načtená hra se nezdaní podruhé ---
@@ -3048,6 +3092,15 @@ const server = http.createServer((req, res) => {
     sim.money = 200000;
     const c = map.cities[0];
     c.pop = 30;
+    // trakce potřebuje v dosahu rozvodnu s VN přípojnicí
+    let sub = null;
+    for (let r = 1; r <= 4 && !sub; r++) {
+      for (let dy = -r; dy <= r && !sub; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (sim.canPlace('sub', c.x + dx, c.y + dy).ok) { sub = sim.place('sub', c.x + dx, c.y + dy); break; }
+      }
+    }
+    sim.buyTrafo(sub, 't110_22');
     const [wx, wy] = renderer.tileToWorld(c.x, c.y);
     renderer.cam.x = wx; renderer.cam.y = wy;
     // klik na střed města otevře panel

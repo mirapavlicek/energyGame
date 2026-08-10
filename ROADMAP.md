@@ -104,7 +104,9 @@ Všech 76 položek je implementováno (✅), byť některé ve zjednodušené po
     21 % ze zisku po odpisech (5 % majetku ročně), daň z majetku 0,8 %,
     licenční poplatky regulátora a windfall daň 60 % z části základu nad
     1,5násobkem průměru posledních čtyř let. Ztrátový rok se přenáší jako
-    daňová ztráta na 5 let; nedoplatek pokryje provozní úvěr.
+    daňová ztráta na 5 let. Během roku se platí zálohy podle loňské
+    povinnosti a na Silvestra se doúčtuje jen rozdíl (přeplatek se vrací);
+    nedoplatek pokryje provozní úvěr.
 
 ## Města, průmysl a poptávka
 
@@ -127,7 +129,9 @@ Všech 76 položek je implementováno (✅), byť některé ve zjednodušené po
     se kupují v panelu města a navazují na sebe. Trakce má vlastní přepravní
     špičky (7:00 a 16:00), noční útlum (metro v noci nejezdí) a rekuperační
     brzdění (15/25/35 %). Vynáší jízdné, zrychluje růst města a zvedá strop
-    populace; při výpadku zůstane ve vozovně a cestující to štve.
+    populace; při výpadku zůstane ve vozovně a cestující to štve. Trakční
+    měnírna se napájí z VN, takže město musí mít v dosahu rozvodnu
+    s přípojnicí 22 nebo 11 kV – samotné NN na trakci nestačí.
 
 ## UI/UX a přehlednost
 

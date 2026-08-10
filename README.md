@@ -218,6 +218,9 @@ a získáš stálého odběratele, tržby z jízdného a atraktivnější město
 
 - **Systémy na sebe navazují** – metro chce nejdřív tramvaje, tramvaje
   nejdřív trolejbusy. Cena roste s velikostí města (delší síť).
+- **Trakční měnírna visí na vysokém napětí**, ne na domovní síti: město
+  musí mít v dosahu rozvodnu s **VN přípojnicí (22 nebo 11 kV)**. Samotné
+  NN na trakci nestačí – nejdřív tedy pořádná rozvodna, pak tramvaj.
 - **Vlastní denní profil**: trakce má přepravní špičky kolem 7:00 a 16:00,
   mezi nimi sedlo a v noci vozovnu. Odpolední špička přichází dřív než
   domácí večerní, takže trakce zátěž spíš rozprostírá.
@@ -246,6 +249,9 @@ rok. HUD ukazuje 🧾 rozjetý hospodářský výsledek a v popisku i odhad odvo
 - **Windfall daň 60 %** z části základu, která přesáhne **1,5násobek průměru
   posledních čtyř let** – kdo roste postupně, nezaplatí nic; kdo jednorázově
   vystřelí, přispěje. Expertní režim má práh níž.
+- **Zálohy na daň** se platí průběžně celý rok podle loňské povinnosti,
+  na Silvestra se doúčtuje jen rozdíl (přeplatek se vrací). První rok
+  žádné zálohy nejsou, takže přijde celá částka najednou.
 - Kdyby na odvody nezbylo, **nedoplatek pokryje provozní úvěr** – hra tě
   nepošle rovnou do bankrotu, ale dluh začne nabíhat úroky.
 

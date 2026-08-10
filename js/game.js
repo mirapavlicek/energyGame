@@ -1301,6 +1301,10 @@
         (ca && ca.sub >= 0 ? 'rozvodna v dosahu ✓' : 'bez rozvodny v dosahu!') + '</span><br>';
       rows += 'Spokojenost: <span class="val">' + Math.round((c.satisfaction || 0) * 100) +
         ' %</span> · prestiž <span class="val">' + Math.round((c.reliab === undefined ? 1 : c.reliab) * 100) + ' %</span><br>';
+      const trSub = sim.tractionSubOf(c);
+      rows += 'Trakční měnírna: <span class="' + (trSub ? 'val' : 'bad') + '">' +
+        (trSub ? 'z VN rozvodny [' + trSub.x + ',' + trSub.y + '] ✓' : 'chybí VN přípojnice v dosahu') +
+        '</span><br>';
 
       const list = sim.transitList(c);
       if (list.length === 0) {
@@ -1318,12 +1322,19 @@
       for (const key of EG.TRANSIT_KEYS) {
         const el = $('#bp-tr-cost-' + key);
         if (!el) continue;
+        const def = EG.TRANSIT[key];
         const chk = sim.canBuyTransit(c, key);
         const cost = sim.transitCost(c, key);
-        el.textContent = chk.ok ? '−' + cost : (c.pop < EG.TRANSIT[key].minPop
-          ? 'od ' + EG.TRANSIT[key].minPop + ' tis.' : 'nejdřív ' + EG.TRANSIT[EG.TRANSIT[key].needs].name.toLowerCase());
+        if (chk.ok) el.textContent = '−' + cost;
+        else if (c.pop < def.minPop) el.textContent = 'od ' + def.minPop + ' tis.';
+        else if (def.needs && !sim.hasTransit(c, def.needs)) {
+          el.textContent = 'nejdřív ' + EG.TRANSIT[def.needs].name.toLowerCase();
+        } else el.textContent = 'chybí VN';
         const btn = el.closest('button');
-        if (btn) btn.disabled = !chk.ok || sim.money < cost;
+        if (btn) {
+          btn.disabled = !chk.ok || sim.money < cost;
+          btn.dataset.why = chk.ok ? '' : chk.why;
+        }
       }
       return;
     }
@@ -1701,8 +1712,10 @@
       'Odhad odvodů na Silvestra: ' + eur(est.total) + ' € = daň z příjmu ' + eur(est.incomeTax) +
       (est.windfall > 0.5 ? ' + windfall ' + eur(est.windfall) : '') +
       ' + z majetku ' + eur(est.property) + ' + licence ' + eur(est.license) + '\n' +
-      'Windfall daň se platí ze základu nad ' + eur(est.windfallFrom) + ' €' +
-      (last ? '\nLoni zaplaceno: ' + eur(last.total) + ' €' : '');
+      'Windfall daň se platí ze základu nad ' + eur(est.windfallFrom) + ' €\n' +
+      'Zálohy zaplacené letos: ' + eur(sim.taxAdvance || 0) + ' € → doplatek ' +
+      eur(est.total - (sim.taxAdvance || 0)) + ' €' +
+      (last ? '\nLoni celkem: ' + eur(last.total) + ' €' : '');
   }
 
   /* ---------- HUD ---------- */
