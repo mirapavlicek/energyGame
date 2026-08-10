@@ -157,6 +157,74 @@
     penalty: 0.12,       // sankce za nedodanou MW·s sjednaného exportu
   };
 
+  /* --- Městská elektrická doprava (MHD) ---
+     Historicky stavěly a provozovaly tramvajové dráhy právě elektrárenské
+     společnosti: trakce jim udělala odbyt mimo večerní světelnou špičku.
+     Ve hře je to totéž – zaplatíš stavbu, získáš stálého odběratele,
+     tržby z jízdného a atraktivnější město, které rychleji roste.
+
+     `mw` je trakční příkon na tisíc obyvatel při plném provozu, `dcV`
+     trakční napětí (trolejbusy 600 V, tramvaje 750 V, metro 750 V ze
+     třetí kolejnice) a `regen` podíl energie vrácené rekuperačním
+     brzděním – metro brzdí do každé stanice, proto rekuperuje nejvíc.
+     `firstH`/`lastH` je provozní doba, `nightK` útlum nočních linek
+     (metro v noci opravdu nejezdí). Tržby a provoz jsou roční, přepočtené
+     na herní sekundu; dopravní podnik se bez cestujících neuživí. */
+  const TRANSIT = {
+    trolley: {
+      key: 'trolley', name: 'Trolejbusy', ico: '🚎', cost: 420, minPop: 8, needs: null,
+      mw: 0.08, volts: 600, regen: 0.15, fare: 0.0060, upkeep: 6,
+      firstH: 4.5, lastH: 24, nightK: 0.12, growth: 0.15, capBonus: 4,
+      desc: 'Nejlevnější elektrická trakce: troleje se zavěsí nad stávající ulice, ' +
+        'žádné koleje. Malý odběr, rychlá návratnost.',
+    },
+    tram: {
+      key: 'tram', name: 'Tramvaje', ico: '🚊', cost: 1500, minPop: 18, needs: 'trolley',
+      mw: 0.18, volts: 750, regen: 0.25, fare: 0.0125, upkeep: 18,
+      firstH: 4.5, lastH: 24, nightK: 0.08, growth: 0.25, capBonus: 8,
+      desc: 'Kolejová páteř města na 750 V. Dražší stavba (koleje, měnírny), ' +
+        'ale veze násobně víc lidí a přitáhne zástavbu k tratím.',
+    },
+    metro: {
+      key: 'metro', name: 'Metro', ico: '🚇', cost: 9000, minPop: 40, needs: 'tram',
+      mw: 0.30, volts: 750, regen: 0.35, fare: 0.0300, upkeep: 70,
+      firstH: 5, lastH: 24, nightK: 0, growth: 0.40, capBonus: 16,
+      desc: 'Podzemní dráha s napájením ze třetí kolejnice. Obrovská investice ' +
+        'i odběr, zato nejvyšší tržby a nejsilnější růst města. V noci nejezdí.',
+    },
+  };
+  const TRANSIT_KEYS = Object.keys(TRANSIT);
+
+  /* Denní křivka trakčního odběru: ranní a odpolední přepravní špička,
+     mezi nimi sedlo, v noci vozovna. Na rozdíl od domácností je odpolední
+     špička dřív (cesta z práce) a ranní ostřejší. */
+  function transitCurve(h, def) {
+    const night = h < def.firstH || h >= def.lastH;
+    if (night) return def.nightK;
+    const morning = Math.exp(-Math.pow(h - 7, 2) / 2.2);
+    const afternoon = Math.exp(-Math.pow(h - 16, 2) / 4.5);
+    return 0.42 + 0.58 * Math.max(morning, afternoon);
+  }
+
+  /* --- Daně a poplatky: účtují se jednou ročně z hospodaření za rok ---
+     `income` je daň z příjmu ze zisku po odpisech, `property` roční daň
+     z majetku (stavby, trafa, vedení), `license` licenční poplatek
+     regulátora za každou výrobnu a `depreciation` roční odpis majetku,
+     který daňový základ snižuje – investice se tak vyplatí i daňově.
+     Ztrátový rok se přenáší do dalších let jako daňová ztráta. */
+  const TAX = {
+    income: 0.21,        // daň z příjmu ze zisku po odpisech
+    property: 0.008,     // roční daň z majetku
+    license: 12,         // licenční poplatek za každou výrobnu
+    licenseBase: 40,     // paušál za licenci obchodníka a distributora
+    depreciation: 0.05,  // roční odpis majetku (rovnoměrně, 20 let)
+    lossCarry: 5,        // kolik let lze uplatnit daňovou ztrátu
+    windfall: 0.6,       // sazba mimořádné daně z nadměrných zisků
+    windfallOver: 1.5,   // platí se nad 1,5násobkem průměru minulých let
+    windfallFloor: 3000, // pod tímhle základem se windfall neplatí nikdy
+    histYears: 4,        // z kolika let se počítá srovnávací průměr
+  };
+
   /* Zásobníky energie: kapacita (MW·s), max. výkon a round-trip účinnost.
      Nabíjí se automaticky z přebytků své sítě, vybíjí při deficitu. */
   const STORAGE = {
@@ -938,6 +1006,164 @@
     return this._baseGenOf(b, sun, wind) * levelMult(b.level) * this.condFactor(b) * warm;
   };
 
+  /* --- Městská elektrická doprava: stav, ceny a nákup --- */
+
+  Sim.prototype.hasTransit = function (c, key) {
+    return !!(c.transit && c.transit[key]);
+  };
+
+  /* seznam systémů, které ve městě jezdí (v pořadí trolejbus → tramvaj → metro) */
+  Sim.prototype.transitList = function (c) {
+    return TRANSIT_KEYS.filter((k) => this.hasTransit(c, k));
+  };
+
+  /* Cena stavby roste s velikostí města – větší město potřebuje delší síť.
+     Základní cena platí pro město na hranici minimální velikosti. */
+  Sim.prototype.transitCost = function (c, key) {
+    const def = TRANSIT[key];
+    if (!def) return null;
+    return Math.ceil(def.cost * (0.7 + 0.3 * c.pop / def.minPop));
+  };
+
+  Sim.prototype.canBuyTransit = function (c, key) {
+    const def = TRANSIT[key];
+    if (!def) return { ok: false, why: 'Neznámý dopravní systém' };
+    if (this.hasTransit(c, key)) return { ok: false, why: def.name + ' už ve městě jezdí' };
+    if (def.needs && !this.hasTransit(c, def.needs)) {
+      return { ok: false, why: 'Nejdřív ' + TRANSIT[def.needs].name.toLowerCase() +
+        ' – bez páteřní sítě se ' + def.name.toLowerCase() + ' nezaplatí' };
+    }
+    if (c.pop < def.minPop) {
+      return { ok: false, why: def.name + ': málo obyvatel (' + c.pop + ' tis., potřeba ' + def.minPop + ')' };
+    }
+    return { ok: true };
+  };
+
+  Sim.prototype.buyTransit = function (c, key) {
+    const chk = this.canBuyTransit(c, key);
+    if (!chk.ok) { this.msg(chk.why, 'warn'); return false; }
+    const def = TRANSIT[key];
+    const cost = this.transitCost(c, key);
+    if (this.money < cost) { this.msg('Nedostatek peněz na stavbu (' + cost + ' €)', 'warn'); return false; }
+    this.money -= cost;
+    if (!c.transit) c.transit = {};
+    c.transit[key] = 1;
+    this.msg(def.ico + ' ' + c.name + ': ' + def.name.toLowerCase() + ' v provozu (−' + cost +
+      ') – trakce ' + def.volts + ' V DC, špička ' +
+      (c.pop * def.mw * (1 - def.regen)).toFixed(1) + ' MW', 'info', c);
+    return true;
+  };
+
+  /* Souhrnný bonus dopravy: rychlejší růst a vyšší strop populace –
+     město s dobrou dopravou přitáhne lidi i zástavbu. */
+  Sim.prototype.transitBonus = function (c) {
+    let growth = 0, cap = 0;
+    for (const key of this.transitList(c)) {
+      growth += TRANSIT[key].growth;
+      cap += TRANSIT[key].capBonus;
+    }
+    return { growth, cap };
+  };
+
+  /* Trakční odběr města v MW: přepravní špičky, noční vozovna a rekuperace.
+     Trakce je na sezónu citlivá jen zpola – topí se ve vozech, ale kilometry
+     jsou pořád stejné. */
+  Sim.prototype.transitDemand = function (c, dayPhase) {
+    if (!c.transit) return 0;
+    const h = (6 + dayPhase * 24) % 24;
+    let mw = 0;
+    for (const key of this.transitList(c)) {
+      const def = TRANSIT[key];
+      mw += c.pop * def.mw * transitCurve(h, def) * (1 - def.regen);
+    }
+    return mw * (1 + 0.5 * (((this.seasonFx || {}).demand || 1) - 1));
+  };
+
+  /* --- Daně a poplatky --- */
+
+  /* Účetní hodnota majetku: stavby včetně traf a všechna vedení. */
+  Sim.prototype.assetValue = function () {
+    let v = 0;
+    for (const b of this.buildings) v += this.equipValue(b);
+    for (const l of this.lines) {
+      v += l.len * LINE_TYPES[l.level].cost * (l.n || 1) * (l.cable ? 2.5 : 1);
+    }
+    return v;
+  };
+
+  /* Daňové přiznání za uplynulý rok. Základ je provozní zisk snížený
+     o odpisy majetku a o daňovou ztrátu z minulých let (uplatnitelnou
+     TAX.lossCarry let). Nad rámec daně z příjmu se platí daň z majetku,
+     licenční poplatky regulátora a při mimořádných ziscích i windfall daň
+     – energetika je regulovaný obor a stát si svůj podíl vezme. */
+  Sim.prototype.taxReport = function (yearIdx) {
+    const assets = this.assetValue();
+    const depreciation = assets * TAX.depreciation;
+    const profit = this.yearProfit || 0;
+    const licensed = this.buildings.filter((b) => b.kind !== 'sub' && b.kind !== 'xborder').length;
+    const license = TAX.licenseBase + TAX.license * licensed;
+    const property = assets * TAX.property;
+
+    // zisk po odpisech, pak uplatnění starých ztrát (od nejstarší)
+    const gross = profit - depreciation;
+    const fresh = (this.taxLosses || []).filter((e) => yearIdx - e.y <= TAX.lossCarry);
+    let base = Math.max(0, gross), lossUsed = 0;
+    const losses = [];
+    for (const e of fresh) {
+      const take = Math.min(base, e.a);
+      base -= take;
+      lossUsed += take;
+      if (e.a - take > 0.5) losses.push({ y: e.y, a: e.a - take });
+    }
+    if (gross < 0) losses.push({ y: yearIdx, a: -gross });
+
+    const incomeTax = base * TAX.income;
+    /* Mimořádná daň z nadměrných zisků se – stejně jako ta skutečná –
+       neváže na pevnou částku, ale na vlastní minulost firmy: zdaní se
+       jen to, co výrazně přesáhne průměr posledních let. Kdo roste
+       postupně, nezaplatí nic; kdo jednorázově vystřelí, přispěje.
+       Expertní režim má práh nižší. */
+    const hist = (this.taxBaseHistory || []).slice(-TAX.histYears);
+    const avg = hist.length ? hist.reduce((s, v) => s + v, 0) / hist.length : 0;
+    const k = TAX.windfallOver / (this.hardMode ? 1.25 : 1);
+    const floor = TAX.windfallFloor / (this.hardMode ? 2 : 1);
+    const threshold = Math.max(floor, avg * k);
+    const windfall = hist.length ? Math.max(0, base - threshold) * TAX.windfall : 0;
+    return {
+      year: yearIdx, assets, depreciation, profit, licensed, license, property,
+      lossUsed, base, incomeTax, windfall, windfallFrom: threshold, losses,
+      total: incomeTax + windfall + property + license,
+      history: hist.concat(base).slice(-TAX.histYears),
+    };
+  };
+
+  /* Odvod na konci roku. Na daně se peníze najdou vždycky – nedoplatek
+     pokryje provozní úvěr, který ovšem začne nabíhat úroky. */
+  Sim.prototype._payTaxes = function (yearIdx) {
+    const r = this.taxReport(yearIdx);
+    this.taxLosses = r.losses;
+    this.taxBaseHistory = r.history;
+    this.lastTax = r;
+    this.yearProfit = 0;
+    this.money -= r.total;
+    const eur = (v) => Math.round(v).toLocaleString('cs-CZ');
+    this.msg('🧾 Přiznání za rok ' + yearIdx + ': zisk ' + eur(r.profit) + ' € − odpisy ' +
+      eur(r.depreciation) + ' €' + (r.lossUsed > 0.5 ? ' − ztráta minulých let ' + eur(r.lossUsed) + ' €' : '') +
+      ' → základ ' + eur(r.base) + ' €');
+    this.msg('🧾 Odvody: daň z příjmu ' + eur(r.incomeTax) + ' €' +
+      (r.windfall > 0.5 ? ' + windfall daň ' + eur(r.windfall) + ' €' : '') +
+      ' + z majetku ' + eur(r.property) + ' € + licence ' + eur(r.license) + ' € = −' +
+      eur(r.total) + ' €', 'warn');
+    if (this.money < 0 && !this.gameOver) {
+      const need = Math.ceil(-this.money);
+      this.debt = (this.debt || 0) + need;
+      this.money += need;
+      this.msg('🏦 Na odvody nezbylo – nedoplatek ' + eur(need) +
+        ' € pokryl provozní úvěr (dluh ' + eur(this.debt) + ' €)', 'warn');
+    }
+    return r;
+  };
+
   /* Poptávka města v MW – každé město má vlastní potřebu: roste s populací,
      spotřeba na obyvatele a denní profil se liší podle charakteru města. */
   Sim.prototype._cityDemand = function (c, dayPhase) {
@@ -961,7 +1187,8 @@
     // elektromobilita: s roky roste noční nabíjecí špička (22:00–06:00)
     const ev = Math.min(0.25, 0.04 * (this.yearIdx || 0));
     if (ev > 0 && (h >= 22 || h < 6)) curve += ev;
-    return base * curve;
+    // městská elektrická doprava má vlastní špičky, proto se přičítá zvlášť
+    return base * curve + this.transitDemand(c, dayPhase);
   };
 
   /* Poptávka podniku v MW – huť a chemička jedou nepřetržitě,
@@ -1318,10 +1545,12 @@
     // suché a mokré roky: každý rok má vlastní hydrologii (0,75–1,25×)
     const yearIdx = Math.floor(this.time / yearLen);
     this.yearIdx = yearIdx;
+    // roční koeficienty jsou deterministické ze seedu, takže po načtení hry
+    // sedí i bez toho, aby se znovu spouštěla novoroční uzávěrka
+    this._hydroYearFx = 0.75 + 0.5 * EG.rng.hash2(yearIdx * 13 + 7, 3, this.map.seed);
+    this._fuelYearK = 0.85 + 0.3 * EG.rng.hash2(yearIdx * 7 + 3, 11, this.map.seed + 4);
     if (this._hydroYearIdx !== yearIdx) {
       this._hydroYearIdx = yearIdx;
-      this._hydroYearFx = 0.75 + 0.5 * EG.rng.hash2(yearIdx * 13 + 7, 3, this.map.seed);
-      this._fuelYearK = 0.85 + 0.3 * EG.rng.hash2(yearIdx * 7 + 3, 11, this.map.seed + 4);
       const f = this._hydroYearFx;
       this.msg('Hydrologická předpověď na rok ' + (yearIdx + 1) + ': ' +
         (f < 0.9 ? 'suchý rok' : f > 1.1 ? 'vodný rok' : 'průměrný rok') +
@@ -1330,6 +1559,8 @@
         this.msg('Trh s palivy: ceny ' + (this._fuelYearK >= 1 ? '+' : '') +
           Math.round((this._fuelYearK - 1) * 100) + ' %, emisní povolenky zdražují uhlí o ' +
           Math.round((Math.pow(1.03, yearIdx) - 1) * 100) + ' %');
+        // uzávěrka roku: daně a poplatky z hospodaření za uplynulý rok
+        this._payTaxes(yearIdx);
         // nové podniky jako odměna za spolehlivou síť
         this._maybeSpawnIndustry();
         // občasná zakázka velkoodběratele
@@ -1895,12 +2126,14 @@
       c.powered = ratio;
       // prestiž: dlouhodobě spolehlivá města platí víc, zklamaná méně
       c.reliab = c.reliab === undefined ? ratio : c.reliab + (ratio - c.reliab) * Math.min(1, dt / 60);
+      // dobrá doprava město zatraktivní: roste rychleji a unese víc lidí
+      const tb = this.transitBonus(c);
       if (ratio > 0.95) {
         c.satisfaction = Math.min(1, c.satisfaction + dt * 0.02);
         c.unhappyTime = 0;
         // pomalý růst: jen spokojená města, a čím větší, tím pomaleji
-        const growRate = 0.008 * c.satisfaction * (1 - c.pop / 80);
-        if (this._rng() < dt * growRate && c.pop < 60) {
+        const growRate = 0.008 * c.satisfaction * (1 + tb.growth) * (1 - c.pop / (80 + tb.cap));
+        if (this._rng() < dt * growRate && c.pop < 60 + tb.cap) {
           c.pop += 1;
           this._syncHouses(c);
           this.msg(c.name + ' se rozrostlo na ' + c.pop + ' tis. obyvatel', 'info', c);
@@ -1913,6 +2146,18 @@
           this._syncHouses(c);
           this.blackouts++;
         }
+      }
+      // trakce visí na městské síti: když město nesvítí, MHD zůstane ve vozovně
+      if (c.transit && this.transitList(c).length > 0) {
+        const down = ratio < 0.5;
+        if (down !== !!c.transitDown) {
+          this.msg(down
+            ? '🚉 ' + c.name + ': výpadek zastavil městskou dopravu'
+            : '🚉 ' + c.name + ': městská doprava opět jezdí', down ? 'warn' : 'info', c);
+        }
+        c.transitDown = down;
+        // stojící vozy naštvou cestující víc než zhasnutá žárovka doma
+        if (down) c.satisfaction = Math.max(0, c.satisfaction - dt * 0.03);
       }
     }
 
@@ -2073,6 +2318,20 @@
       }
     }
 
+    // --- městská doprava: tržby z jízdného a provoz dopravního podniku ---
+    // vozovny a údržba se platí pořád, jízdné jen když se opravdu jezdí
+    let fareIncome = 0;
+    for (const ca of cityAssign) {
+      const c = ca.city;
+      if (!c.transit) continue;
+      for (const key of this.transitList(c)) {
+        const def = TRANSIT[key];
+        upkeep += def.upkeep;
+        if (ca.sub < 0 || c.transitDown) continue;
+        fareIncome += c.pop * def.fare * (0.7 + 0.3 * c.satisfaction);
+      }
+    }
+
     // kapacitní platby: pohotová záloha klasických zdrojů (nevyužitý výkon)
     let reservePay = 0;
     for (let i = 0; i < n; i++) {
@@ -2087,9 +2346,12 @@
     const inflK = Math.pow(1.02, this.yearIdx || 0);
     const interest = (this.debt || 0) * 0.10 / yearLenS;
 
-    const income = cityIncome + indIncome + reservePay
+    const income = cityIncome + indIncome + fareIncome + reservePay
       + xIncome - xCost - xPenalty - dataPenalty - interest;
-    this.money += (income - upkeep * inflK * 0.01) * dt;
+    const net = income - upkeep * inflK * 0.01;
+    this.money += net * dt;
+    // hospodářský výsledek za rozjetý rok – z něj se na Silvestra počítá daň
+    this.yearProfit = (this.yearProfit || 0) + net * dt;
     this.score += (delivered + exported) * dt * 0.01;
 
     // bankrot: hluboko v minusu hra končí
@@ -2107,11 +2369,11 @@
       produced, delivered, indDelivered, demand: totalDemand,
       losses: totalLoss,
       exported, imported, xPenalty,
-      spot, spotK: this.spotK, reservePay, dataPenalty,
+      spot, spotK: this.spotK, reservePay, dataPenalty, fareIncome,
       overloaded, overloadedTrafos,
       unpowered: cityAssign.filter((ca) => (ca.demand > 0 && (ca.served / ca.demand) < 0.5)).length +
         indAssign.filter((ia) => (ia.demand > 0 && (ia.served / ia.demand) < 0.5)).length,
-      income: income - upkeep * inflK * 0.01,
+      income: net,
     };
     this.cityAssign = cityAssign;
     this.indAssign = indAssign;
@@ -2123,7 +2385,7 @@
   const GAME_OVER_LOCKED = ['place', 'connect', 'demolish', 'removeLine', 'buyTrafo', 'buyTrafoReg',
     'setTrafoReg', 'buyCompensator', 'upgrade', 'upgradeRange', 'service', 'serviceLine',
     'setContract', 'setFuelContract', 'buyFuel', 'setMothball', 'retrofitBiomass',
-    'adjustXContract', 'takeLoan', 'repayLoan'];
+    'adjustXContract', 'takeLoan', 'repayLoan', 'buyTransit'];
   for (const fn of GAME_OVER_LOCKED) {
     const orig = Sim.prototype[fn];
     Sim.prototype[fn] = function (...args) {
@@ -2160,6 +2422,13 @@
         blackouts: sim.blackouts, nextId: sim.nextId,
         buildings: sim.buildings, lines: sim.lines, events: sim.events || [],
         noiseT: sim._noiseT,
+        // daně: rozjetý hospodářský výsledek, neuplatněné ztráty a poslední přiznání
+        yearProfit: sim.yearProfit || 0,
+        taxLosses: sim.taxLosses || [],
+        taxBaseHistory: sim.taxBaseHistory || [],
+        lastTax: sim.lastTax || null,
+        // ať načtená hra nespustí novoroční uzávěrku (a odvody) znovu
+        hydroYear: sim._hydroYearIdx,
         rng: sim._rng.getState ? sim._rng.getState() : undefined,
         hard: sim.hardMode ? 1 : 0,
         over: sim.gameOver ? 1 : 0,
@@ -2199,6 +2468,11 @@
     sim.blackouts = d.sim.blackouts;
     sim.nextId = d.sim.nextId;
     sim._noiseT = d.sim.noiseT;
+    sim.yearProfit = d.sim.yearProfit || 0;
+    sim.taxLosses = Array.isArray(d.sim.taxLosses) ? d.sim.taxLosses : [];
+    sim.taxBaseHistory = Array.isArray(d.sim.taxBaseHistory) ? d.sim.taxBaseHistory : [];
+    sim.lastTax = d.sim.lastTax || null;
+    if (d.sim.hydroYear !== undefined) sim._hydroYearIdx = d.sim.hydroYear;
     sim.hardMode = !!d.sim.hard;
     sim.gameOver = !!d.sim.over;
     sim.tick(0.001);
@@ -2213,6 +2487,10 @@
   EG.STORAGE = STORAGE;
   EG.TRAFO_REG = TRAFO_REG;
   EG.XTRADE = XTRADE;
+  EG.TRANSIT = TRANSIT;
+  EG.TRANSIT_KEYS = TRANSIT_KEYS;
+  EG.TAX = TAX;
+  EG.transitCurve = transitCurve;
   EG.levelMult = levelMult;
   EG.meritOf = meritOf;
   EG.fuelDefOf = fuelDef;

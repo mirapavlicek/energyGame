@@ -16,6 +16,7 @@
     STAR: 24, PIP: 25, NUKE: 26, GASP: 27, GEOTH: 28, BIOG: 29, WASTE: 30, OWIND: 31,
     H2: 32, GEOFIELD: 33, WIND2: 34, OWIND2: 35, TRACT: 36, BESS: 37,
     MPAD: 38, MPACK: 39, MCONV: 40,
+    TROLLEY: 41, TRAM: 42, METRO: 43,
   };
 
   function diamond(ctx, cx, cy, hw, hh) {
@@ -541,6 +542,130 @@
       c.moveTo(AX + 1, AY - 38); c.lineTo(AX - 3, AY - 31); c.lineTo(AX, AY - 31);
       c.lineTo(AX - 2, AY - 25); c.lineTo(AX + 3, AY - 33); c.lineTo(AX, AY - 33);
       c.closePath(); c.fill();
+    });
+
+    /* Městská elektrická doprava – kreslí se na dlaždice zástavby, aby
+       bylo na první pohled vidět, co ve městě jezdí. */
+
+    // ulice podél téže iso osy, na které stojí vozidlo
+    function street(ctx) {
+      tile(ctx, '#9aa77f', '#aeb992', '#7d8a66');
+      ctx.fillStyle = '#5b5f63';
+      ctx.beginPath();
+      ctx.moveTo(AX + 14, AY + 15); ctx.lineTo(AX + 30, AY + 7);
+      ctx.lineTo(AX - 14, AY - 15); ctx.lineTo(AX - 30, AY - 7);
+      ctx.closePath(); ctx.fill();
+    }
+
+    // trolejové vedení mezi dvěma stožáry
+    function trolleyWire(ctx, y) {
+      ctx.strokeStyle = '#4b525a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(AX - 22, AY - 1); ctx.lineTo(AX - 22, y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(AX + 22, AY - 12); ctx.lineTo(AX + 22, y - 11); ctx.stroke();
+      ctx.strokeStyle = '#2f353b'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(AX - 22, y + 3); ctx.lineTo(AX + 22, y - 8); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(AX - 22, y + 6); ctx.lineTo(AX + 22, y - 5); ctx.stroke();
+    }
+
+    /* Vodorovný pás na obou viditelných bocích skříně (okna, lišta).
+       Geometrie kopíruje boční stěny z box(), aby pás seděl na plechu
+       a nevisel ve vzduchu jako obdélník v obrazové rovině. */
+    function band(ctx, w, d, dy, h1, h2, color) {
+      const cy = AY + dy;
+      ctx.fillStyle = color;
+      for (const s of [-1, 1]) {
+        ctx.beginPath();
+        ctx.moveTo(AX + s * w, cy - h1); ctx.lineTo(AX, cy + d - h1);
+        ctx.lineTo(AX, cy + d - h2); ctx.lineTo(AX + s * w, cy - h2);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+
+    /* Skříň vozidla: podstava je protáhlá podél jedné izometrické osy,
+       takže vůz vypadá jako vůz, a ne jako kostka. Vrací rohy podstavy
+       a výšku střechy, aby šel doplnit pás oken a sběrač. */
+    function car(ctx, L, W, h, dy, roof, flank, front) {
+      const cy = AY + dy;
+      const P = (sl, sw) => [AX + sl * L - sw * W, cy + sl * L / 2 + sw * W / 2];
+      const g = { p1: P(1, 1), p2: P(1, -1), p3: P(-1, -1), p4: P(-1, 1), h, top: cy - h };
+      const up = (p) => [p[0], p[1] - h];
+      const poly = (pts, color) => {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(pts[0][0], pts[0][1]);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+        ctx.closePath(); ctx.fill();
+      };
+      poly([g.p4, g.p1, up(g.p1), up(g.p4)], flank);           // dlouhý bok
+      poly([g.p1, g.p2, up(g.p2), up(g.p1)], front);           // čelo
+      poly([up(g.p1), up(g.p2), up(g.p3), up(g.p4)], roof);    // střecha
+      return g;
+    }
+
+    // vodorovný pás (okna, lišta) po celém obvodu viditelných stěn vozu
+    function carBand(ctx, g, h1, h2, color) {
+      ctx.fillStyle = color;
+      for (const [a, b] of [[g.p4, g.p1], [g.p1, g.p2]]) {
+        ctx.beginPath();
+        ctx.moveTo(a[0], a[1] - h1); ctx.lineTo(b[0], b[1] - h1);
+        ctx.lineTo(b[0], b[1] - h2); ctx.lineTo(a[0], a[1] - h2);
+        ctx.closePath(); ctx.fill();
+      }
+    }
+
+    // sběrač proudu od střechy k troleji
+    function pantograph(ctx, g, wireY, dx) {
+      ctx.strokeStyle = '#2f353b'; ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(AX - 3 + dx, g.top + 1); ctx.lineTo(AX + 2 + dx, wireY);
+      ctx.moveTo(AX + 5 + dx, g.top + 1); ctx.lineTo(AX + 2 + dx, wireY);
+      ctx.stroke();
+    }
+
+    at(S.TROLLEY, (c) => {
+      street(c);
+      trolleyWire(c, AY - 28);
+      // trolejbus: červený lak, světlá střecha, pás oken
+      const g = car(c, 11, 4, 9, -3, '#eef1f4', '#cf4436', '#b23a2d');
+      carBand(c, g, 4.5, 7.5, '#2b333c');
+      carBand(c, g, 1.2, 2.2, '#f4f4f2');
+      pantograph(c, g, AY - 25, 2);
+    });
+
+    at(S.TRAM, (c) => {
+      street(c);
+      // kolejový svršek podél osy jízdy
+      c.strokeStyle = '#9aa0a6'; c.lineWidth = 1.6;
+      c.beginPath(); c.moveTo(AX - 25.5, AY - 9.5); c.lineTo(AX + 18.5, AY + 12.5); c.stroke();
+      c.beginPath(); c.moveTo(AX - 18.5, AY - 12.5); c.lineTo(AX + 25.5, AY + 9.5); c.stroke();
+      trolleyWire(c, AY - 32);
+      // tramvaj: delší a nižší skříň v červenokrémovém laku
+      const g = car(c, 16, 4.5, 10, -4, '#eef1f4', '#c8352b', '#a82c23');
+      carBand(c, g, 5, 8.5, '#2b333c');
+      carBand(c, g, 1.5, 2.6, '#e8c84a');
+      pantograph(c, g, AY - 29, 0);
+    });
+
+    at(S.METRO, (c) => {
+      tile(c, '#8f9db2', '#a5b2c4', '#75839a');
+      // vstup do podzemí před prosklený vestibul
+      c.fillStyle = '#161c24';
+      c.beginPath();
+      c.moveTo(AX - 5, AY + 2); c.lineTo(AX + 4, AY - 2.5);
+      c.lineTo(AX + 9, AY); c.lineTo(AX, AY + 4.5);
+      c.closePath(); c.fill();
+      box(c, 12, 6, 10, '#c3ccd6', '#46525f', '#39434e', -3);
+      band(c, 12, 6, -3, 2.5, 7.5, '#7fc4e0'); // prosklení vestibulu
+      // sloupek se znakem metra
+      c.strokeStyle = '#6e7680'; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(AX + 16, AY - 3); c.lineTo(AX + 16, AY - 30); c.stroke();
+      c.fillStyle = '#1f8a4c';
+      c.beginPath(); c.arc(AX + 16, AY - 36, 8, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#ffffff';
+      c.font = 'bold 11px sans-serif';
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText('M', AX + 16, AY - 35.5);
     });
 
     at(S.SEL, (c) => {

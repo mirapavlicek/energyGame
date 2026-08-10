@@ -2682,6 +2682,421 @@ const server = http.createServer((req, res) => {
   if (!(mega.peakOut > mega.maxP * 0.9)) throw new Error('farma nedodá plný výkon: ' + mega.peakOut + ' z ' + mega.maxP);
   if (!mega.demolishedFromCorner) throw new Error('demolice kliknutím v areálu farmu neodstranila');
 
+  // --- městská elektrická doprava: trolejbusy, tramvaje a metro ---
+  const mhd = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    sim.tick(0.001); // ať jsou k dispozici sezónní koeficienty
+    const c = map.cities[0];
+    const atH = (h) => ((h - 6 + 24) % 24) / 24; // hodina -> fáze dne
+
+    // podmínky stavby: velikost města a návaznost systémů
+    c.pop = 6;
+    const smallRejected = !sim.canBuyTransit(c, 'trolley').ok;
+    c.pop = 30;
+    const tramNeedsTrolley = sim.canBuyTransit(c, 'tram');
+    const metroNeedsTram = sim.canBuyTransit(c, 'metro');
+
+    // cena roste s velikostí města (delší síť)
+    c.pop = 8;
+    const costSmall = sim.transitCost(c, 'trolley');
+    c.pop = 32;
+    const costBig = sim.transitCost(c, 'trolley');
+
+    // nákup: strhne se přesně cena a systém začne jezdit
+    c.pop = 30;
+    const demandBefore = sim._cityDemand(c, atH(8));
+    const price = sim.transitCost(c, 'trolley');
+    const moneyBefore = sim.money;
+    const bought = sim.buyTransit(c, 'trolley');
+    const paid = moneyBefore - sim.money;
+    const demandAfter = sim._cityDemand(c, atH(8));
+    const twiceRejected = !sim.buyTransit(c, 'trolley');
+
+    // tramvaj se odemkla až po trolejbusech
+    const tramNowOk = sim.canBuyTransit(c, 'tram').ok;
+    sim.buyTransit(c, 'tram');
+    const metroStillSmall = !sim.canBuyTransit(c, 'metro').ok;
+    c.pop = 45;
+    const metroOk = sim.canBuyTransit(c, 'metro').ok;
+
+    // rekuperace: trolejbus odebere jen (1 − regen) štítkového příkonu
+    c.pop = 30;
+    c.transit = { trolley: 1 };
+    const def = EG.TRANSIT.trolley;
+    const season = sim.seasonFx.demand;
+    const peak = sim.transitDemand(c, atH(7));
+    const peakExpect = c.pop * def.mw * EG.transitCurve(7, def) * (1 - def.regen) *
+      (1 + 0.5 * (season - 1));
+
+    // denní profil: přepravní špičky ráno a odpoledne, v sedle a v noci útlum
+    const mMorning = sim.transitDemand(c, atH(7));
+    const mMidday = sim.transitDemand(c, atH(11));
+    const mAfternoon = sim.transitDemand(c, atH(16));
+    const mNight = sim.transitDemand(c, atH(2));
+
+    // metro v noci nejezdí vůbec, trolejbusy mají noční linky
+    c.transit = { metro: 1 };
+    const metroNight = sim.transitDemand(c, atH(2));
+    c.transit = { trolley: 1 };
+    const trolleyNight = sim.transitDemand(c, atH(2));
+
+    // bonus k růstu a stropu populace
+    c.transit = { trolley: 1, tram: 1, metro: 1 };
+    const bonus = sim.transitBonus(c);
+    const noneBonus = sim.transitBonus({ });
+
+    // uložení a načtení hry si dopravu pamatuje
+    const json = EG.serialize(sim);
+    const sim2 = EG.restore(json);
+    const keptTransit = JSON.stringify(sim2.map.cities[0].transit);
+
+    return {
+      smallRejected,
+      tramNeedsTrolley: tramNeedsTrolley.ok === false && /trolejbus/i.test(tramNeedsTrolley.why),
+      metroNeedsTram: metroNeedsTram.ok === false,
+      costSmall, costBig, costGrows: costBig > costSmall,
+      bought, paid, price, priceMatches: paid === price,
+      addedMw: +(demandAfter - demandBefore).toFixed(2),
+      twiceRejected, tramNowOk, metroStillSmall, metroOk,
+      peak: +peak.toFixed(3), peakExpect: +peakExpect.toFixed(3),
+      mMorning: +mMorning.toFixed(2), mMidday: +mMidday.toFixed(2),
+      mAfternoon: +mAfternoon.toFixed(2), mNight: +mNight.toFixed(2),
+      metroNight: +metroNight.toFixed(3), trolleyNight: +trolleyNight.toFixed(3),
+      bonus, noneBonus, keptTransit,
+    };
+  });
+  console.log('městská doprava:', JSON.stringify(mhd));
+  if (!mhd.smallRejected) throw new Error('trolejbusy jdou postavit i v malé vsi');
+  if (!mhd.tramNeedsTrolley) throw new Error('tramvaj nevyžaduje trolejbusy');
+  if (!mhd.metroNeedsTram) throw new Error('metro nevyžaduje tramvaje');
+  if (!mhd.costGrows) throw new Error('cena neroste s velikostí města: ' + mhd.costSmall + ' -> ' + mhd.costBig);
+  if (!mhd.bought || !mhd.priceMatches) throw new Error('nákup nestrhl přesnou cenu: ' + mhd.paid + ' / ' + mhd.price);
+  if (!(mhd.addedMw > 1 && mhd.addedMw < 3)) throw new Error('trolejbusy přidaly divný odběr: ' + mhd.addedMw + ' MW');
+  if (!mhd.twiceRejected) throw new Error('stejný systém jde koupit dvakrát');
+  if (!mhd.tramNowOk || !mhd.metroStillSmall || !mhd.metroOk) throw new Error('odemykání systémů nefunguje');
+  if (Math.abs(mhd.peak - mhd.peakExpect) > 0.01) throw new Error('rekuperace nesedí: ' + mhd.peak + ' vs ' + mhd.peakExpect);
+  if (!(mhd.mMorning > mhd.mMidday && mhd.mAfternoon > mhd.mMidday)) {
+    throw new Error('chybí přepravní špičky: ráno ' + mhd.mMorning + ', sedlo ' + mhd.mMidday + ', odpoledne ' + mhd.mAfternoon);
+  }
+  if (!(mhd.mNight < mhd.mMidday)) throw new Error('v noci se nejezdí míň: ' + mhd.mNight);
+  if (mhd.metroNight !== 0) throw new Error('metro jezdí i v noci: ' + mhd.metroNight);
+  if (!(mhd.trolleyNight > 0)) throw new Error('trolejbusy nemají noční linky');
+  if (mhd.bonus.cap !== 28 || Math.abs(mhd.bonus.growth - 0.8) > 1e-9) {
+    throw new Error('bonus kompletní MHD nesedí: ' + JSON.stringify(mhd.bonus));
+  }
+  if (mhd.noneBonus.cap !== 0 || mhd.noneBonus.growth !== 0) throw new Error('město bez MHD dostává bonus');
+  if (mhd.keptTransit !== '{"trolley":1,"tram":1,"metro":1}') throw new Error('uložená hra zapomněla MHD: ' + mhd.keptTransit);
+
+  // --- MHD v provozu: jízdné, provoz a odstávka při výpadku ---
+  const mhdRun = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 1000000;
+    const c = map.cities[0];
+    c.pop = 30;
+
+    // rozvodna u města a dvě uhelné na 220 kV, ať město opravdu svítí
+    const near = (kind, cx, cy, maxR) => {
+      for (let r = 1; r <= maxR; r++) {
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (sim.canPlace(kind, cx + dx, cy + dy).ok) return sim.place(kind, cx + dx, cy + dy);
+        }
+      }
+      return null;
+    };
+    const sub = near('sub', c.x, c.y, 4);
+    sim.upgrade(sub); sim.upgrade(sub); sim.upgrade(sub); // víc vývodových polí
+    sim.buyTrafo(sub, 't220_110');
+    sim.buyTrafo(sub, 't110_22'); sim.buyTrafo(sub, 't110_22');
+    sim.buyTrafo(sub, 't22_04'); sim.buyTrafo(sub, 't22_04'); sim.buyTrafo(sub, 't22_04');
+    for (let k = 0; k < 2; k++) {
+      const p = near('coal', c.x + 8 + k * 3, c.y + 6, 6);
+      if (p) { sim.connect(p, sub, 220); sim.setFuelContract(p, true); }
+    }
+    for (let i = 0; i < 60; i++) sim.tick(0.2);
+    const poweredBefore = c.powered;
+    const fareBefore = sim.stats.fareIncome || 0;
+
+    sim.buyTransit(c, 'trolley');
+    sim.buyTransit(c, 'tram');
+    for (let i = 0; i < 60; i++) sim.tick(0.2);
+    const fareRunning = sim.stats.fareIncome || 0;
+    const downWhileRunning = !!c.transitDown;
+
+    // provoz dopravního podniku se platí i tak: bez MHD je upkeep nižší
+    const incomeWithMhd = sim.stats.income;
+
+    // vypnout dodávku: MHD zůstane ve vozovně a přijde hlášení
+    for (const b of sim.buildings) if (b.kind !== 'sub') sim.setMothball(b, true);
+    for (let i = 0; i < 80; i++) sim.tick(0.2);
+    const downAfterBlackout = !!c.transitDown;
+    const fareWhenDown = sim.stats.fareIncome || 0;
+    const stopMsg = sim.messages.some((m) => m.text.includes('zastavil městskou dopravu'));
+
+    // obnovit dodávku
+    for (const b of sim.buildings) sim.setMothball(b, false);
+    for (let i = 0; i < 160; i++) sim.tick(0.2);
+    const backUp = !c.transitDown;
+    const backMsg = sim.messages.some((m) => m.text.includes('opět jezdí'));
+
+    return {
+      poweredBefore: +poweredBefore.toFixed(2), fareBefore,
+      fareRunning: +fareRunning.toFixed(3), downWhileRunning,
+      incomeWithMhd: +incomeWithMhd.toFixed(2),
+      downAfterBlackout, fareWhenDown, stopMsg, backUp, backMsg,
+    };
+  });
+  console.log('MHD v provozu:', JSON.stringify(mhdRun));
+  if (!(mhdRun.poweredBefore > 0.9)) throw new Error('testovací síť město nenapájí: ' + mhdRun.poweredBefore);
+  if (mhdRun.fareBefore !== 0) throw new Error('město bez MHD vybírá jízdné');
+  if (!(mhdRun.fareRunning > 0)) throw new Error('jezdící MHD nevybírá jízdné: ' + mhdRun.fareRunning);
+  if (mhdRun.downWhileRunning) throw new Error('napájená MHD se hlásí jako odstavená');
+  if (!mhdRun.downAfterBlackout) throw new Error('výpadek nezastavil MHD');
+  if (mhdRun.fareWhenDown !== 0) throw new Error('stojící MHD pořád vybírá jízdné: ' + mhdRun.fareWhenDown);
+  if (!mhdRun.stopMsg) throw new Error('chybí hlášení o zastavení MHD');
+  if (!mhdRun.backUp || !mhdRun.backMsg) throw new Error('MHD se po obnovení dodávky nerozjela');
+
+  // --- roční daně a poplatky ---
+  const dane = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 200000;
+
+    // hodnota majetku: stavba + trafa + vedení
+    const near = (kind, cx, cy, maxR) => {
+      for (let r = 1; r <= maxR; r++) {
+        for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          if (sim.canPlace(kind, cx + dx, cy + dy).ok) return sim.place(kind, cx + dx, cy + dy);
+        }
+      }
+      return null;
+    };
+    const c = map.cities[0];
+    const sub = near('sub', c.x, c.y, 4);
+    const coal = near('coal', c.x + 9, c.y + 6, 6);
+    sim.buyTrafo(sub, 't220_110');
+    const line = sim.connect(coal, sub, 220);
+    const expectAssets = EG.BUILD.sub.cost + EG.TRAFOS.t220_110.cost + EG.BUILD.coal.cost +
+      line.len * EG.LINE_TYPES[220].cost;
+    const assets = sim.assetValue();
+
+    // ziskový rok: základ = zisk − odpisy, daň 21 %
+    sim.yearProfit = 10000;
+    sim.taxLosses = [];
+    sim.taxBaseHistory = [];
+    const r1 = sim.taxReport(1);
+    const depOk = Math.abs(r1.depreciation - assets * EG.TAX.depreciation) < 0.01;
+    const baseOk = Math.abs(r1.base - (10000 - r1.depreciation)) < 0.01;
+    const incomeOk = Math.abs(r1.incomeTax - r1.base * EG.TAX.income) < 0.01;
+    const propertyOk = Math.abs(r1.property - assets * EG.TAX.property) < 0.01;
+    const licenseOk = r1.license === EG.TAX.licenseBase + EG.TAX.license * r1.licensed;
+    const noWindfallFirst = r1.windfall === 0; // bez historie není s čím srovnávat
+
+    // ztrátový rok: nulová daň z příjmu a ztráta se přenese
+    sim.yearProfit = -4000;
+    sim.taxLosses = [];
+    sim.taxBaseHistory = [];
+    const r2 = sim.taxReport(2);
+    const lossZeroTax = r2.incomeTax === 0 && r2.base === 0;
+    const lossCarried = r2.losses.length === 1 && Math.abs(r2.losses[0].a - (4000 + r2.depreciation)) < 0.01;
+
+    // následující ziskový rok ztrátu uplatní
+    sim.taxLosses = r2.losses;
+    sim.yearProfit = 10000;
+    const r3 = sim.taxReport(3);
+    const lossUsed = r3.lossUsed > 0 && Math.abs(r3.base - (10000 - r3.depreciation - r3.lossUsed)) < 0.01;
+
+    // stará ztráta po TAX.lossCarry letech propadne
+    sim.taxLosses = [{ y: 0, a: 9999 }];
+    sim.yearProfit = 10000;
+    const rOld = sim.taxReport(1 + EG.TAX.lossCarry + 1);
+    const oldLossExpired = rOld.lossUsed === 0;
+
+    // windfall daň: skokový zisk nad násobkem průměru minulých let
+    sim.taxLosses = [];
+    sim.taxBaseHistory = [4000, 4000, 4000, 4000]; // práh = 1,5 × 4000 = 6000
+    sim.yearProfit = 5000;
+    const rCalm = sim.taxReport(6);
+    sim.yearProfit = 60000;
+    const rSpike = sim.taxReport(6);
+    const windfallOk = rCalm.windfall === 0 && rSpike.windfall > 0 &&
+      Math.abs(rSpike.windfall - (rSpike.base - rSpike.windfallFrom) * EG.TAX.windfall) < 0.01;
+    const calmBase = Math.round(rCalm.base);
+
+    // expertní režim má práh níž
+    const normalFrom = sim.taxReport(6).windfallFrom;
+    sim.hardMode = true;
+    const hardFrom = sim.taxReport(6).windfallFrom;
+    sim.hardMode = false;
+
+    // odvod na Silvestra: strhne peníze a zapíše historii
+    sim.taxLosses = [];
+    sim.taxBaseHistory = [];
+    sim.yearProfit = 10000;
+    sim.money = 50000;
+    const paid = sim._payTaxes(7);
+    const moneyAfter = sim.money;
+    const chargedOk = Math.abs(50000 - moneyAfter - paid.total) < 0.01;
+    const profitReset = sim.yearProfit === 0;
+    const historyKept = sim.taxBaseHistory.length === 1;
+    const taxMsg = sim.messages.some((m) => m.text.includes('Přiznání za rok 7'));
+
+    // nedoplatek pokryje provozní úvěr, hráč nespadne rovnou do mínusu
+    sim.taxBaseHistory = [];
+    sim.taxLosses = [];
+    sim.yearProfit = 20000;
+    sim.money = 10;
+    sim.debt = 0;
+    sim._payTaxes(8);
+    const rescuedByLoan = sim.money >= 0 && sim.debt > 0;
+
+    return {
+      assets: +assets.toFixed(1), expectAssets: +expectAssets.toFixed(1),
+      depOk, baseOk, incomeOk, propertyOk, licenseOk, noWindfallFirst,
+      lossZeroTax, lossCarried, lossUsed, oldLossExpired,
+      windfallOk, calmBase, windfallFrom: Math.round(rSpike.windfallFrom),
+      spikeWindfall: Math.round(rSpike.windfall),
+      normalFrom: Math.round(normalFrom), hardFrom: Math.round(hardFrom),
+      chargedOk, profitReset, historyKept, taxMsg, rescuedByLoan,
+      total: Math.round(paid.total),
+    };
+  });
+  console.log('daně:', JSON.stringify(dane));
+  if (Math.abs(dane.assets - dane.expectAssets) > 0.1) {
+    throw new Error('hodnota majetku nesedí: ' + dane.assets + ' vs ' + dane.expectAssets);
+  }
+  if (!dane.depOk) throw new Error('odpisy nejsou 5 % majetku');
+  if (!dane.baseOk) throw new Error('daňový základ nezohlednil odpisy');
+  if (!dane.incomeOk) throw new Error('daň z příjmu není 21 % základu');
+  if (!dane.propertyOk) throw new Error('daň z majetku nesedí');
+  if (!dane.licenseOk) throw new Error('licenční poplatky nesedí');
+  if (!dane.noWindfallFirst) throw new Error('windfall daň bez historie nemá co srovnávat');
+  if (!dane.lossZeroTax) throw new Error('ztrátový rok se zdanil');
+  if (!dane.lossCarried) throw new Error('ztráta se nepřenesla do dalších let');
+  if (!dane.lossUsed) throw new Error('přenesená ztráta se neuplatnila');
+  if (!dane.oldLossExpired) throw new Error('propadlá ztráta se pořád uplatňuje');
+  if (!dane.windfallOk) {
+    throw new Error('windfall daň nesedí: klidný základ ' + dane.calmBase + ' při prahu ' +
+      dane.windfallFrom + ', skok dal ' + dane.spikeWindfall);
+  }
+  if (!(dane.hardFrom < dane.normalFrom)) {
+    throw new Error('expertní režim nemá nižší práh windfall daně: ' + dane.hardFrom + ' vs ' + dane.normalFrom);
+  }
+  if (!dane.chargedOk) throw new Error('odvod nestrhl správnou částku');
+  if (!dane.profitReset) throw new Error('hospodářský výsledek se po uzávěrce nevynuloval');
+  if (!dane.historyKept) throw new Error('daňová historie se nezapsala');
+  if (!dane.taxMsg) throw new Error('chybí hlášení o daňovém přiznání');
+  if (!dane.rescuedByLoan) throw new Error('nedoplatek nepokryl provozní úvěr');
+
+  // --- uzávěrka běží na přelomu roku a načtená hra se nezdaní podruhé ---
+  const daneRok = await page.evaluate(() => {
+    const map = EG.generateMap(160, 42);
+    const sim = new EG.Sim(map);
+    sim.money = 50000;
+    const yearLen = sim.dayLen * 12;
+
+    // těsně před koncem roku 1 ještě uzávěrka neproběhla
+    sim.time = yearLen - 1;
+    sim.tick(0.001);
+    sim.yearProfit = 6000;
+    const before = sim.money;
+    const taxedEarly = sim.messages.some((m) => m.text.includes('Přiznání za rok 1'));
+
+    // překročení roku uzávěrku spustí
+    sim.time = yearLen + 1;
+    sim.tick(0.001);
+    const taxedAtTurn = sim.messages.some((m) => m.text.includes('Přiznání za rok 1'));
+    const dropped = before - sim.money;
+
+    // druhý tick ve stejném roce už nedaní znovu
+    const moneyAfterTax = sim.money;
+    sim.tick(0.001);
+    const filings = sim.messages.filter((m) => m.text.includes('Přiznání za rok 1')).length;
+    const stable = Math.abs(sim.money - moneyAfterTax) < 5;
+
+    // uložení a načtení hry uzávěrku nezopakuje
+    const json = EG.serialize(sim);
+    const sim2 = EG.restore(json);
+    const reloadDiff = Math.abs(sim2.money - sim.money);
+    const filingsAfterLoad = sim2.messages.filter((m) => m.text.includes('Přiznání za rok 1')).length;
+
+    return {
+      taxedEarly, taxedAtTurn, dropped: Math.round(dropped), filings, stable,
+      reloadDiff: +reloadDiff.toFixed(2), filingsAfterLoad,
+      hydroFx: +(sim2._hydroYearFx || 0).toFixed(3),
+    };
+  });
+  console.log('daňový rok:', JSON.stringify(daneRok));
+  if (daneRok.taxedEarly) throw new Error('uzávěrka proběhla ještě před koncem roku');
+  if (!daneRok.taxedAtTurn) throw new Error('na přelomu roku se nedanilo');
+  if (!(daneRok.dropped > 0)) throw new Error('uzávěrka nestrhla peníze: ' + daneRok.dropped);
+  if (daneRok.filings !== 1) throw new Error('uzávěrka proběhla vícekrát: ' + daneRok.filings);
+  if (!daneRok.stable) throw new Error('daň se strhává každý tick');
+  if (!(daneRok.reloadDiff < 5)) throw new Error('načtení hry zdanilo znovu: rozdíl ' + daneRok.reloadDiff);
+  if (daneRok.filingsAfterLoad !== 0) throw new Error('načtená hra vygenerovala nové přiznání');
+  if (!(daneRok.hydroFx >= 0.75 && daneRok.hydroFx <= 1.25)) {
+    throw new Error('načtená hra ztratila hydrologický koeficient: ' + daneRok.hydroFx);
+  }
+
+  // --- panel města: nákup MHD přes UI ---
+  const cityPanel = await page.evaluate(() => {
+    const { sim, map, renderer } = EG.game;
+    sim.money = 200000;
+    const c = map.cities[0];
+    c.pop = 30;
+    const [wx, wy] = renderer.tileToWorld(c.x, c.y);
+    renderer.cam.x = wx; renderer.cam.y = wy;
+    // klik na střed města otevře panel
+    const cv = document.getElementById('game');
+    const r = cv.getBoundingClientRect();
+    const ev = (type, x, y) => cv.dispatchEvent(new MouseEvent(type, {
+      clientX: x, clientY: y, bubbles: true, button: 0,
+    }));
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    ev('mousemove', cx, cy);
+    ev('mousedown', cx, cy);
+    ev('mouseup', cx, cy);
+    const panel = document.getElementById('bpanel');
+    const title = document.getElementById('bp-title').textContent;
+    const btns = [...document.querySelectorAll('#bp-actions .bp-btn[data-transit]')];
+    const before = sim.money;
+    const trolleyBtn = btns.find((b) => b.dataset.transit === 'trolley');
+    if (trolleyBtn) trolleyBtn.click();
+    const bought = sim.hasTransit(c, 'trolley');
+    const spent = before - sim.money;
+    const btnsAfter = [...document.querySelectorAll('#bp-actions .bp-btn[data-transit]')].map((b) => b.dataset.transit);
+
+    // města jdou najít i v seznamu objektů a klik na řádek otevře jejich panel
+    document.getElementById('btn-objlist').click();
+    const filter = document.getElementById('objlist-filter');
+    filter.value = 'city';
+    filter.dispatchEvent(new Event('change'));
+    const cityRows = document.querySelectorAll('#objlist-rows .obj-row[data-city]').length;
+    const anyBuilding = document.querySelectorAll('#objlist-rows .obj-row:not([data-city])').length;
+    document.getElementById('btn-objlist').click();
+
+    return {
+      visible: !panel.hidden, title, isCity: title.startsWith(c.name),
+      nBtns: btns.length, bought, spent,
+      btnsAfter, statsHasMhd: document.getElementById('bp-stats').textContent.includes('Doprava'),
+      cityRows, anyBuilding, nCities: map.cities.length,
+    };
+  });
+  console.log('panel města:', JSON.stringify(cityPanel));
+  if (!cityPanel.visible || !cityPanel.isCity) throw new Error('klik na město neotevřel panel města: ' + cityPanel.title);
+  if (cityPanel.nBtns !== 3) throw new Error('panel nenabízí tři dopravní systémy: ' + cityPanel.nBtns);
+  if (!cityPanel.bought || !(cityPanel.spent > 0)) throw new Error('tlačítko trolejbusů nic nepostavilo');
+  if (cityPanel.btnsAfter.includes('trolley')) throw new Error('postavený systém zůstal v nabídce');
+  if (!cityPanel.statsHasMhd) throw new Error('panel neukazuje postavenou dopravu');
+  if (cityPanel.cityRows !== cityPanel.nCities) {
+    throw new Error('filtr měst nevypsal všechna města: ' + cityPanel.cityRows + ' z ' + cityPanel.nCities);
+  }
+  if (cityPanel.anyBuilding !== 0) throw new Error('filtr měst vypsal i stavby');
+
   // rozehraná hra v živé instanci + screenshot
   const live = await page.evaluate(() => {
     const { sim, map, renderer } = EG.game;

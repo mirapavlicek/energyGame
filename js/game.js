@@ -14,6 +14,7 @@
   let lineCable = false;       // stavět jako podzemní kabel (2,5× cena)
   let selected = null;         // budova otevřená v panelu správy
   let selectedLine = null;     // vedení otevřené v panelu správy
+  let selectedCity = null;     // město otevřené v panelu správy (městská doprava)
   let hoverF = [0, 0];         // přesná pozice kurzoru v dlaždicích (trefa na vedení)
 
   /* barvy vedení podle napěťové úrovně */
@@ -164,6 +165,11 @@
       if (!row) return;
       const [wx, wy] = renderer.tileToWorld(+row.dataset.x, +row.dataset.y);
       renderer.cam.x = wx; renderer.cam.y = wy;
+      if (row.dataset.city !== undefined) {
+        const c = map.cities[+row.dataset.city];
+        if (c) selectCity(c);
+        return;
+      }
       const b = sim.buildings.find((o) => o.id === +row.dataset.id);
       if (b) selectBuilding(b);
     });
@@ -439,6 +445,7 @@
     const filter = $('#objlist-filter').value;
     const rows = [];
     for (const b of sim.buildings) {
+      if (filter === 'city') break; // města se vypisují níž, stavby sem nepatří
       const grp = kindGroup(b.kind);
       const problem = b.broken || (EG.fuelDefOf(b) && b.fuel <= 0) || (b.cond !== undefined && b.cond < 0.3);
       if (filter === 'gen' && grp !== 'gen') continue;
@@ -458,6 +465,20 @@
       rows.push('<div class="obj-row" data-x="' + b.x + '" data-y="' + b.y + '" data-id="' + b.id + '">' +
         '<span class="o-name">' + EG.BUILD[b.kind].name + ' [' + b.x + ',' + b.y + ']</span>' +
         '<span>' + perf + '</span>' + state + '</div>');
+    }
+    // města: kandidáti na městskou dopravu i přehled napájení
+    if (filter === 'all' || filter === 'city' || filter === 'bad') {
+      map.cities.forEach((c, i) => {
+        const dark = (c.powered || 0) < 0.5;
+        if (filter === 'bad' && !dark) return;
+        const tr = sim.transitList(c).map((k) => EG.TRANSIT[k].ico).join('') || '<span class="dim">bez MHD</span>';
+        const state = dark ? '<span class="bad">nesvítí</span>'
+          : c.transitDown ? '<span class="warn">MHD stojí</span>'
+          : '<span class="dim">ok</span>';
+        rows.push('<div class="obj-row" data-x="' + c.x + '" data-y="' + c.y + '" data-city="' + i + '">' +
+          '<span class="o-name">' + c.name + ' [' + c.x + ',' + c.y + ']</span>' +
+          '<span>' + c.pop + ' tis. ' + tr + '</span>' + state + '</div>');
+      });
     }
     $('#objlist-rows').innerHTML = rows.join('') ||
       '<div class="dim" style="padding:6px">Nic tu není.</div>';
@@ -663,7 +684,7 @@
           setLineLevel(EG.LEVELS[(i + 1) % EG.LEVELS.length]);
         } else setTool(byHotkey[0]);
       }
-      else if (k === 'escape') { if (selected) closePanel(); else setTool('pan'); }
+      else if (k === 'escape') { if (selected || selectedLine || selectedCity) closePanel(); else setTool('pan'); }
       else if (k === 'q') setTool('pan');
       else if (k === 'x') setTool('demolish');
       else if (k === 'p') document.body.classList.toggle('photo'); // fotorežim
@@ -682,6 +703,8 @@
       if (b) { selectBuilding(b); return; }
       const l = lineNear(hoverF[0], hoverF[1]);
       if (l) { selectLine(l); return; }
+      const c = cityAt(gx, gy);
+      if (c) { selectCity(c); return; }
       closePanel();
       return;
     }
@@ -1034,6 +1057,16 @@
   function selectLine(l) {
     selectedLine = l;
     selected = null;
+    selectedCity = null;
+    $('#bpanel').hidden = false;
+    buildPanelActions();
+    updatePanel();
+  }
+
+  function selectCity(c) {
+    selectedCity = c;
+    selected = null;
+    selectedLine = null;
     $('#bpanel').hidden = false;
     buildPanelActions();
     updatePanel();
@@ -1042,7 +1075,14 @@
   function closePanel() {
     selected = null;
     selectedLine = null;
+    selectedCity = null;
     $('#bpanel').hidden = true;
+  }
+
+  /* město pod kurzorem: střed, jeho okolí nebo některá dlaždice zástavby */
+  function cityAt(gx, gy) {
+    return map.cities.find((c) => (Math.abs(c.x - gx) <= 2 && Math.abs(c.y - gy) <= 2) ||
+      c.houses.some(([hx, hy]) => hx === gx && hy === gy)) || null;
   }
 
   function bpButton(html, cls, onClick) {
@@ -1059,6 +1099,38 @@
     const b = selected;
     const box = $('#bp-actions');
     box.innerHTML = '';
+
+    // panel města: stavba městské elektrické dopravy
+    if (selectedCity) {
+      const c = selectedCity;
+      const sec = document.createElement('div');
+      sec.className = 'bp-sec';
+      sec.style.borderTop = 'none';
+      sec.style.marginTop = '0';
+      sec.style.paddingTop = '0';
+      sec.textContent = 'Městská elektrická doprava';
+      sec.title = 'Trakce je stálý odběratel mimo večerní špičku a přinese tržby z jízdného. ' +
+        'Dobrá doprava město zatraktivní, takže rychleji roste a unese víc obyvatel.';
+      box.appendChild(sec);
+      if (sim.transitList(c).length === EG.TRANSIT_KEYS.length) {
+        const done = document.createElement('div');
+        done.className = 'bp-trafo-none';
+        done.textContent = 'Město má kompletní elektrickou dopravu – trolejbusy, tramvaje i metro.';
+        box.appendChild(done);
+      }
+      for (const key of EG.TRANSIT_KEYS) {
+        const def = EG.TRANSIT[key];
+        if (sim.hasTransit(c, key)) continue;
+        const el = bpButton(def.ico + ' Postavit ' + def.name.toLowerCase() +
+          '<span class="cost" id="bp-tr-cost-' + key + '"></span>', '',
+          () => sim.buyTransit(c, key));
+        el.dataset.transit = key;
+        el.title = def.desc + '\n\nTrakce ' + def.volts + ' V DC, rekuperace ' +
+          Math.round(def.regen * 100) + ' %, od ' + def.minPop + ' tis. obyvatel.' +
+          (def.needs ? '\nVyžaduje: ' + EG.TRANSIT[def.needs].name.toLowerCase() + '.' : '');
+      }
+      return;
+    }
 
     // panel vedení: servis a odpojení
     if (selectedLine) {
@@ -1209,6 +1281,53 @@
   }
 
   function updatePanel() {
+    // panel města: obyvatelstvo, odběr a městská doprava
+    if (selectedCity) {
+      const c = selectedCity;
+      // město mohlo zaniknout s načtením jiné hry
+      if (!map.cities.includes(c)) { closePanel(); return; }
+      const kindName = { res: 'obytné', ind: 'průmyslové', mix: 'smíšené' }[c.kind] || '';
+      const ca = (sim.cityAssign || []).find((a) => a.city === c);
+      const tb = sim.transitBonus(c);
+      $('#bp-title').textContent = c.name + ' [' + c.x + ',' + c.y + ']';
+      $('#bp-cond-row').hidden = true;
+      $('#bp-schema').hidden = true;
+
+      let rows = 'Charakter: <span class="val">' + kindName + '</span> · obyvatel <span class="val">' +
+        c.pop + ' tis.</span> <span class="dim">(strop ' + (60 + tb.cap) + ')</span><br>';
+      rows += 'Odběr: <span class="val">' + (ca ? ca.demand.toFixed(1) : '?') + ' MW</span> · dodávka <span class="val">' +
+        (ca ? ca.served.toFixed(1) : '?') + ' MW</span> (' + Math.round((c.powered || 0) * 100) + ' %)<br>';
+      rows += 'Připojení: <span class="' + (ca && ca.sub >= 0 ? 'val' : 'bad') + '">' +
+        (ca && ca.sub >= 0 ? 'rozvodna v dosahu ✓' : 'bez rozvodny v dosahu!') + '</span><br>';
+      rows += 'Spokojenost: <span class="val">' + Math.round((c.satisfaction || 0) * 100) +
+        ' %</span> · prestiž <span class="val">' + Math.round((c.reliab === undefined ? 1 : c.reliab) * 100) + ' %</span><br>';
+
+      const list = sim.transitList(c);
+      if (list.length === 0) {
+        rows += '<span class="dim">Bez městské dopravy – lidé jezdí auty.</span><br>';
+      } else {
+        const trMw = sim.transitDemand(c, sim.dayPhase || 0);
+        rows += 'Doprava: <span class="val">' + list.map((k) => EG.TRANSIT[k].ico + ' ' +
+          EG.TRANSIT[k].name.toLowerCase()).join(', ') + '</span><br>';
+        rows += 'Trakční odběr: <span class="val">' + trMw.toFixed(1) + ' MW</span>' +
+          (c.transitDown ? ' <span class="bad">⚠ STOJÍ – výpadek napájení</span>' : '') + '<br>';
+        rows += 'Růst města: <span class="val">+' + Math.round(tb.growth * 100) + ' %</span><br>';
+      }
+      $('#bp-stats').innerHTML = rows;
+
+      for (const key of EG.TRANSIT_KEYS) {
+        const el = $('#bp-tr-cost-' + key);
+        if (!el) continue;
+        const chk = sim.canBuyTransit(c, key);
+        const cost = sim.transitCost(c, key);
+        el.textContent = chk.ok ? '−' + cost : (c.pop < EG.TRANSIT[key].minPop
+          ? 'od ' + EG.TRANSIT[key].minPop + ' tis.' : 'nejdřív ' + EG.TRANSIT[EG.TRANSIT[key].needs].name.toLowerCase());
+        const btn = el.closest('button');
+        if (btn) btn.disabled = !chk.ok || sim.money < cost;
+      }
+      return;
+    }
+
     // panel vedení
     if (selectedLine) {
       const l = selectedLine;
@@ -1472,8 +1591,10 @@
     if (city) {
       const kindName = { res: 'obytné', ind: 'průmyslové', mix: 'smíšené' }[city.kind] || '';
       const ca = (sim.cityAssign || []).find((a) => a.city === city);
+      const tr = sim.transitList(city).map((k) => EG.TRANSIT[k].ico).join('');
       s += ' · ' + city.name + ' (' + kindName + ', ' + city.pop + ' tis., potřeba ' +
-        (ca ? ca.demand.toFixed(0) : '?') + ' MW, napájení ' + Math.round((city.powered || 0) * 100) + ' %)';
+        (ca ? ca.demand.toFixed(0) : '?') + ' MW, napájení ' + Math.round((city.powered || 0) * 100) + ' %' +
+        (tr ? ', MHD ' + tr + (city.transitDown ? ' STOJÍ' : '') : '') + ') – klikni pro dopravu';
     }
     if (tool === 'line' && lineFrom) {
       const LT = EG.LINE_TYPES[lineLevel];
@@ -1564,6 +1685,26 @@
     g.strokeRect(gx - cw / 130, gy - ch / 70, cw / 65, ch / 35);
   }
 
+  /* Daňový ukazatel: rozjetý hospodářský výsledek a odhad odvodů,
+     které přijdou na konci herního roku. */
+  function updateTaxHud() {
+    const eur = (v) => Math.round(v).toLocaleString('cs-CZ');
+    const profit = sim.yearProfit || 0;
+    const el = $('#tax');
+    el.textContent = (profit >= 0 ? '+' : '−') + eur(Math.abs(profit)) + ' €';
+    el.style.color = profit < 0 ? '#ff6a5a' : '';
+    const est = sim.taxReport(sim.yearIdx || 0);
+    const last = sim.lastTax;
+    $('#tax-item').title =
+      'Hospodářský výsledek za rok ' + ((sim.yearIdx || 0) + 1) + ': ' + eur(profit) + ' €\n' +
+      'Majetek ' + eur(est.assets) + ' € · roční odpis ' + eur(est.depreciation) + ' €\n' +
+      'Odhad odvodů na Silvestra: ' + eur(est.total) + ' € = daň z příjmu ' + eur(est.incomeTax) +
+      (est.windfall > 0.5 ? ' + windfall ' + eur(est.windfall) : '') +
+      ' + z majetku ' + eur(est.property) + ' + licence ' + eur(est.license) + '\n' +
+      'Windfall daň se platí ze základu nad ' + eur(est.windfallFrom) + ' €' +
+      (last ? '\nLoni zaplaceno: ' + eur(last.total) + ' €' : '');
+  }
+
   /* ---------- HUD ---------- */
   function updateHUD() {
     $('#money').textContent = Math.floor(sim.money).toLocaleString('cs-CZ') + ' €';
@@ -1582,6 +1723,7 @@
     $('#spot').style.color = (sim.spotK || 1) > 1.25 ? '#f0c040' : '';
     $('#debt-item').hidden = !(sim.debt > 0);
     if (sim.debt > 0) $('#debt').textContent = Math.round(sim.debt).toLocaleString('cs-CZ') + ' €';
+    updateTaxHud();
     if (sim.gameOver && $('#gameover').hidden) {
       $('#gameover').hidden = false;
       speed = 0;
@@ -1682,11 +1824,24 @@
 
     // města (seřazení podle hloubky řeší pořadí přidání – kreslíme po diagonálách zjednodušeně dle y)
     const spr = [];
+    const TRANSIT_SPR = { trolley: S.TROLLEY, tram: S.TRAM, metro: S.METRO };
     for (const c of map.cities) {
+      // městská doprava: pár dlaždic zástavby ustoupí trati a zastávce.
+      // Vybírají se nízké indexy, protože ubývající zástavba mizí od konce.
+      const onTile = {};
+      const trList = sim.transitList(c);
+      if (trList.length > 0) {
+        const built = c.houses.filter(([hx, hy]) => !(hx === c.x && hy === c.y));
+        for (let t = 0; t < trList.length && built.length > 0; t++) {
+          const h = built[(1 + t * 2) % built.length];
+          onTile[h[0] + ',' + h[1]] = TRANSIT_SPR[trList[t]];
+        }
+      }
       for (let i = 0; i < c.houses.length; i++) {
         const [hx, hy] = c.houses[i];
         if (hx === c.x && hy === c.y) continue;
-        spr.push([hx, hy, (hx * 7 + hy * 13) % 3 === 0 ? S.HOUSE2 : S.HOUSE, c]);
+        const tr = onTile[hx + ',' + hy];
+        spr.push([hx, hy, tr || ((hx * 7 + hy * 13) % 3 === 0 ? S.HOUSE2 : S.HOUSE), c]);
       }
       spr.push([c.x, c.y, S.CENTER, c]);
     }
@@ -1767,6 +1922,15 @@
           renderer.pushSprite(x + 0.5 - k * 0.24, y + 0.14 - k * 0.24, S.PIP,
             on ? 0.35 : 0.5, on ? 0.95 : 0.55, on ? 0.4 : 0.55, on ? 0.95 : 0.55);
         }
+      }
+    }
+
+    // vybrané město: zvýrazněný střed a obtažená zástavba
+    if (selectedCity && map.cities.includes(selectedCity)) {
+      renderer.pushSprite(selectedCity.x, selectedCity.y, S.SEL, 1, 1, 1, 0.9);
+      for (const [hx, hy] of selectedCity.houses) {
+        if (hx === selectedCity.x && hy === selectedCity.y) continue;
+        renderer.pushSprite(hx, hy, S.CITYRING, 1, 0.9, 0.4, 0.4);
       }
     }
 
@@ -1904,7 +2068,7 @@
     drawMinimap();
     updateHUD();
     if (chartOn) drawChart();
-    if (selected || selectedLine) updatePanel();
+    if (selected || selectedLine || selectedCity) updatePanel();
     requestAnimationFrame(loop);
   }
 

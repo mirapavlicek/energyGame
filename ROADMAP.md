@@ -1,7 +1,7 @@
 # ⚡ EnergyGame – roadmapa rozšíření
 
 Zásobník nápadů na další vývoj hry, seskupený do oblastí.
-Všech 74 položek je implementováno (✅), byť některé ve zjednodušené podobě.
+Všech 76 položek je implementováno (✅), byť některé ve zjednodušené podobě.
 
 ## Zdroje a technologie
 
@@ -100,6 +100,11 @@ Všech 74 položek je implementováno (✅), byť některé ve zjednodušené po
 39. ✅ Inflace nákladů – – provozní náklady pomalu rostou, tlačí na efektivitu.
 40. ✅ Kapacitní platby – – stát platí za drženou zálohu (nevyužitý
     pohotový výkon).
+76. ✅ Roční daně a poplatky – na Silvestra přijde přiznání: daň z příjmu
+    21 % ze zisku po odpisech (5 % majetku ročně), daň z majetku 0,8 %,
+    licenční poplatky regulátora a windfall daň 60 % z části základu nad
+    1,5násobkem průměru posledních čtyř let. Ztrátový rok se přenáší jako
+    daňová ztráta na 5 let; nedoplatek pokryje provozní úvěr.
 
 ## Města, průmysl a poptávka
 
@@ -117,6 +122,12 @@ Všech 74 položek je implementováno (✅), byť některé ve zjednodušené po
     pro novou huť, odměna X" (mise/kontrakty).
 48. ✅ Datacentrum – – nový typ podniku: konstantní vysoká spotřeba, extrémní
     nároky na spolehlivost (sankce za každý výpadek).
+75. ✅ Placená městská elektrická doprava – trolejbusy (600 V DC, od 8 tis.
+    obyvatel), tramvaje (750 V DC, od 18 tis.) a metro (750 V DC, od 40 tis.)
+    se kupují v panelu města a navazují na sebe. Trakce má vlastní přepravní
+    špičky (7:00 a 16:00), noční útlum (metro v noci nejezdí) a rekuperační
+    brzdění (15/25/35 %). Vynáší jízdné, zrychluje růst města a zvedá strop
+    populace; při výpadku zůstane ve vozovně a cestující to štve.
 
 ## UI/UX a přehlednost
 

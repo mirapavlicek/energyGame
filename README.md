@@ -144,6 +144,10 @@ konec v rozvodně (výkon se vyvádí přes rozvodnu, jako v reálné soustavě)
 - Napájená a spokojená města **pomalu rostou** – přibývají obyvatelé i domy
   na mapě (čím větší město, tím pomalejší růst); při výpadcích se lidé stěhují
   pryč a zástavba se zmenšuje. Za dodanou energii města platí.
+- **Městská elektrická doprava**: do každého města jde koupit **trolejbusy**
+  (od 8 tis. obyvatel, 600 V DC), **tramvaje** (od 18 tis., 750 V DC) a
+  **metro** (od 40 tis., 750 V DC) – vždy jen v tomhle pořadí, protože bez
+  páteřní sítě se dražší systém nezaplatí. Podrobnosti níž.
 - **Železnice**: mapu protínají koridory spojující vzdálená města; podél
   tratí stojí **trakční napájecí stanice** (14–28 MW) – napájí se výhradně
   ze **110kV přípojnice** rozvodny v dosahu a jejich odběr **pulzuje
@@ -198,6 +202,53 @@ a spravovat v panelu:
 - **Větší dosah NN distribuce** (jen rozvodna) – +2 dlaždice za úroveň.
 - **Zbourat** – vrátí 40 % ceny včetně traf (přehradu zbourat nejde).
 
+### Městská elektrická doprava
+
+**Klikni na město** (v režimu prohlížení) a otevře se jeho panel: obyvatelstvo,
+odběr, napájení, spokojenost a nabídka dopravních systémů. Historicky stavěly
+tramvajové dráhy právě elektrárenské společnosti – trakce jim dělala odbyt
+mimo večerní světelnou špičku – a ve hře to funguje stejně: zaplatíš stavbu
+a získáš stálého odběratele, tržby z jízdného a atraktivnější město.
+
+| Systém | Cena od | Od velikosti | Trakce | Rekuperace | Špička |
+| --- | --- | --- | --- | --- | --- |
+| 🚎 Trolejbusy | 420 | 8 tis. | 600 V DC | 15 % | 0,08 MW/tis. |
+| 🚊 Tramvaje | 1 500 | 18 tis. | 750 V DC | 25 % | 0,18 MW/tis. |
+| 🚇 Metro | 9 000 | 40 tis. | 750 V DC | 35 % | 0,30 MW/tis. |
+
+- **Systémy na sebe navazují** – metro chce nejdřív tramvaje, tramvaje
+  nejdřív trolejbusy. Cena roste s velikostí města (delší síť).
+- **Vlastní denní profil**: trakce má přepravní špičky kolem 7:00 a 16:00,
+  mezi nimi sedlo a v noci vozovnu. Odpolední špička přichází dřív než
+  domácí večerní, takže trakce zátěž spíš rozprostírá.
+- **Rekuperace**: brzdící vozy vracejí energii zpět do troleje – metro
+  brzdí do každé stanice, proto ušetří nejvíc.
+- **V noci**: metro nejezdí vůbec, tramvaje a trolejbusy jedou noční linky.
+- **Výpadek zastaví MHD** – když město spadne pod 50 % dodávky, vozy zůstanou
+  ve vozovně, přestane téct jízdné a cestující jsou nespokojenější než
+  z obyčejného zhasnutí. Panel i seznam objektů to hlásí.
+- **Odměna**: kromě jízdného město rychleji roste (+15/25/40 %) a unese víc
+  obyvatel (strop 60 + 4/8/16). Provoz dopravního podniku se ale platí pořád,
+  i když se zrovna nejezdí.
+
+### Daně a poplatky
+
+Na **Silvestra** (rok = 12 herních dní) přijde daňové přiznání za uplynulý
+rok. HUD ukazuje 🧾 rozjetý hospodářský výsledek a v popisku i odhad odvodů.
+
+- **Daň z příjmu 21 %** ze zisku sníženého o odpisy.
+- **Odpisy 5 % hodnoty majetku ročně** (rovnoměrně, 20 let) daňový základ
+  snižují – investice se tedy vyplatí i daňově.
+- **Daňová ztráta** ze ztrátového roku se přenáší a jde ji uplatnit
+  v následujících **5 letech**.
+- **Daň z majetku 0,8 %** z hodnoty staveb, traf a vedení.
+- **Licenční poplatky** regulátora: paušál 40 € + 12 € za každou výrobnu.
+- **Windfall daň 60 %** z části základu, která přesáhne **1,5násobek průměru
+  posledních čtyř let** – kdo roste postupně, nezaplatí nic; kdo jednorázově
+  vystřelí, přispěje. Expertní režim má práh níž.
+- Kdyby na odvody nezbylo, **nedoplatek pokryje provozní úvěr** – hra tě
+  nepošle rovnou do bankrotu, ale dluh začne nabíhat úroky.
+
 ## Ovládání
 
 | Vstup | Akce |
@@ -205,6 +256,7 @@ a spravovat v panelu:
 | tažení myší | posun kamery |
 | kolečko | zoom ke kurzoru |
 | klik na budovu | panel správy (servis, smlouva, modernizace, trafa…) |
+| klik na město | panel města (trolejbusy, tramvaje, metro) |
 | `7` opakovaně | přepínání napěťové úrovně vedení |
 | napsat `funds` | cheat: +1 000 € |
 | `Ctrl+Z` | vrátit poslední stavbu/vedení (plná vratka) |
@@ -224,7 +276,8 @@ stínové kopii – vidíš průběžnou cenu plánu a zaplatíš až po potvrze
 zaznamenává akce, takže jde celá seance přehrát od začátku 8× rychle.
 N-1 analýza počítá ve **Web Workeru**, ať se render nezasekne.
 
-HUD navíc nabízí: 📋 seznam objektů s filtrem, 🗺 mapové vrstvy (dosahy rozvoden / zatížení vedení),
+HUD navíc nabízí: 📋 seznam objektů s filtrem (včetně měst a jejich MHD),
+🗺 mapové vrstvy (dosahy rozvoden / zatížení vedení),
 📈 grafy výroby, dodávky, ztrát a spotové ceny, 💾/📂 uložení a načtení hry,
 💳 úvěr a splátky, N-1 analýzu, 🗓 výzvu dne (společný seed z data) a rekord
 na seed. Achievementy se hlásí v logu. Režimy: `?mode=sandbox` (neomezené
