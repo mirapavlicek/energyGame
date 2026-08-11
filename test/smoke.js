@@ -3407,6 +3407,233 @@ const server = http.createServer((req, res) => {
     throw new Error('klik na varování v HUD neotevřel přehled zatížení');
   }
 
+  // --- cenovka u kurzoru: kolik bude stát to, co se chystám postavit ---
+  const priceTag = await page.evaluate(async () => {
+    const { sim, map, renderer } = EG.game;
+    const cv = renderer.canvas;
+    const W = cv.clientWidth, H = cv.clientHeight;
+    const ev = (type, x, y) => cv.dispatchEvent(new MouseEvent(type, {
+      clientX: x, clientY: y, bubbles: true, button: 0,
+    }));
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const badge = () => {
+      const el = document.getElementById('build-cost');
+      return { text: el.hidden ? null : el.textContent, bad: el.classList.contains('bad') };
+    };
+    /* kamera se posadí tak, aby daná dlaždice padla na dané místo obrazovky;
+       tím jsou souřadnice kliků deterministické bez ohledu na mapu */
+    const aim = (gx, gy, sx, sy) => {
+      const [wx, wy] = renderer.tileToWorld(gx, gy);
+      renderer.cam.x = wx - (sx - W / 2) / renderer.cam.zoom;
+      renderer.cam.y = wy - (sy - H / 2) / renderer.cam.zoom;
+    };
+    const screenOf = (gx, gy) => {
+      const [wx, wy] = renderer.tileToWorld(gx, gy);
+      return [(wx - renderer.cam.x) * renderer.cam.zoom + W / 2,
+        (wy - renderer.cam.y) * renderer.cam.zoom + H / 2];
+    };
+
+    sim.money = 100000;
+    renderer.cam.zoom = 1.3;
+    // dvě rozvodny na 110 kV v rozumné vzdálenosti od sebe
+    let s1 = null, s2 = null;
+    outer:
+    for (let y = 0; y < map.size; y++) for (let x = 0; x < map.size; x++) {
+      if (!sim.canPlace('sub', x, y).ok) continue;
+      if (!s1) { s1 = sim.place('sub', x, y); continue; }
+      const d = Math.hypot(s1.x - x, s1.y - y);
+      if (d > 8 && d < 14) { s2 = sim.place('sub', x, y); break outer; }
+    }
+    sim.buyTrafo(s1, 't110_22');
+    sim.buyTrafo(s2, 't110_22');
+
+    // --- stavba budovy: cena, sleva i důvod, proč to nejde ---
+    document.querySelector('.tool[data-tool="coal"]').click();
+    let land = null;
+    for (let r = 3; r <= 12 && !land; r++) {
+      for (let dy = -r; dy <= r && !land; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (sim.canPlace('coal', s1.x + dx, s1.y + dy).ok) { land = [s1.x + dx, s1.y + dy]; break; }
+      }
+    }
+    aim(land[0], land[1], 700, 560);
+    ev('mousemove', 700, 560);
+    await frame();
+    const onLand = badge();
+
+    sim.money = 100;
+    await frame();
+    const tooPoor = badge();
+    sim.money = 100000;
+
+    // dlaždice pod vodou: místo ceny důvod
+    let water = null;
+    for (let i = 0; i < map.type.length && !water; i++) {
+      if (map.type[i] === EG.T.WATER) water = [i % map.size, (i / map.size) | 0];
+    }
+    aim(water[0], water[1], 700, 560);
+    ev('mousemove', 700, 560);
+    await frame();
+    const onWater = badge();
+
+    // --- stavba vedení: cena roste s délkou ---
+    document.querySelector('.tool[data-tool="line"]').click();
+    document.querySelector('.linelvl[data-level="110"]').click();
+    aim(s1.x, s1.y, 700, 600);
+    ev('mousemove', 700, 600);
+    await frame();
+    const beforeStart = badge();
+
+    ev('mousedown', 700, 600);
+    ev('mouseup', 700, 600);
+    const started = !!EG.game.sim && document.getElementById('build-cost');
+    const [bx, by] = screenOf(s2.x, s2.y);
+    ev('mousemove', bx, by);
+    await frame();
+    const onTarget = badge();
+
+    // cena z cenovky musí sedět s tím, co stavba opravdu strhne
+    const quote = sim.lineQuote(s1, s2, 110, false);
+    const before = sim.money;
+    const line = sim.connect(s1, s2, 110, false);
+    const paid = before - sim.money;
+
+    // druhý systém na téže trase je levnější (společné stožáry)
+    const quote2 = sim.lineQuote(s1, s2, 110, false);
+    // a příliš daleká trasa cenu vůbec nedá (110 kV táhne max 28 dlaždic)
+    let s3 = null;
+    for (let r = 40; r <= 70 && !s3; r++) {
+      for (let dy = -r; dy <= r && !s3; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        if (sim.canPlace('sub', s1.x + dx, s1.y + dy).ok) { s3 = sim.place('sub', s1.x + dx, s1.y + dy); break; }
+      }
+    }
+    if (s3) sim.buyTrafo(s3, 't110_22');
+    const far = s3 ? sim.lineQuote(s1, s3, 110, false) : { ok: false, why: 'daleko' };
+
+    document.querySelector('.tool[data-tool="pan"]').click();
+    await frame();
+    const hiddenInPan = document.getElementById('build-cost').hidden;
+
+    return {
+      onLand, tooPoor, onWater, beforeStart, onTarget, started: !!started, hiddenInPan,
+      quoteCost: quote.cost, paid, lineOk: !!line, quoteLen: +quote.len.toFixed(1),
+      parallelCost: quote2.cost, parallelNote: quote2.note || null,
+      farOk: far.ok, farWhy: far.why,
+      coalCost: sim.buildCost('coal'),
+    };
+  });
+  console.log('cenovka:', JSON.stringify(priceTag));
+  if (!priceTag.onLand.text || !priceTag.onLand.text.includes('−' + priceTag.coalCost + ' €')) {
+    throw new Error('cenovka neukazuje cenu stavby: ' + JSON.stringify(priceTag.onLand));
+  }
+  if (priceTag.onLand.bad) throw new Error('cenovka hlásí problém tam, kde se stavět dá');
+  if (!priceTag.tooPoor.bad || !priceTag.tooPoor.text.includes('nemáš')) {
+    throw new Error('cenovka neupozorní, že na stavbu nemám: ' + JSON.stringify(priceTag.tooPoor));
+  }
+  if (!priceTag.onWater.bad || priceTag.onWater.text.includes('€')) {
+    throw new Error('na vodě má být důvod, ne cena: ' + JSON.stringify(priceTag.onWater));
+  }
+  if (!priceTag.beforeStart.text || !priceTag.beforeStart.text.includes('/dl')) {
+    throw new Error('před prvním klikem chybí cena za dlaždici: ' + JSON.stringify(priceTag.beforeStart));
+  }
+  if (!priceTag.onTarget.text || !priceTag.onTarget.text.includes('−' + priceTag.quoteCost + ' €')) {
+    throw new Error('cenovka vedení neukazuje cenu trasy: ' + JSON.stringify(priceTag.onTarget) +
+      ' (čekal jsem ' + priceTag.quoteCost + ')');
+  }
+  if (!priceTag.onTarget.text.includes(priceTag.quoteLen.toFixed(1) + ' dl')) {
+    throw new Error('cenovka vedení neukazuje délku: ' + priceTag.onTarget.text);
+  }
+  if (!priceTag.lineOk || priceTag.paid !== priceTag.quoteCost) {
+    throw new Error('stavba strhla jinou částku, než slibovala cenovka: ' +
+      priceTag.paid + ' vs ' + priceTag.quoteCost);
+  }
+  if (!(priceTag.parallelCost < priceTag.quoteCost) || !priceTag.parallelNote) {
+    throw new Error('posílení trasy nemá levnější cenu ani poznámku: ' + JSON.stringify(priceTag));
+  }
+  if (priceTag.farOk || !/daleko/.test(priceTag.farWhy)) {
+    throw new Error('příliš dlouhá trasa se tváří jako v pořádku: ' + priceTag.farWhy);
+  }
+  if (!priceTag.hiddenInPan) throw new Error('cenovka svítí i v režimu prohlížení');
+
+  // --- panel nástrojů: skupiny, ikonky a dostupnost podle peněz ---
+  const toolbar = await page.evaluate(async () => {
+    const { sim } = EG.game;
+    // třídy dostupnosti přepisuje herní smyčka, takže se čeká na snímek
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const tools = [...document.querySelectorAll('#toolbar .tool')];
+    const groups = [...document.querySelectorAll('#toolbar .tool-group')].map((el) => el.textContent);
+    const withIcon = tools.filter((el) => el.querySelector('.ico')).length;
+    const withAtlas = tools.filter((el) => (el.querySelector('.ico').style.backgroundImage || '').startsWith('url(')).length;
+    const kinds = Object.entries(EG.BUILD).filter(([, v]) => !v.hidden).length;
+
+    sim.money = 300;
+    await frame();
+    const poor = tools.filter((el) => el.classList.contains('cant')).map((el) => el.dataset.tool);
+    sim.money = 1000000;
+    await frame();
+    const rich = tools.filter((el) => el.classList.contains('cant')).length;
+
+    // dotace na obnovitelné zdroje zlevní i cenovku v panelu
+    const solarCost = document.querySelector('.tool[data-tool="solar"] .cost');
+    const normal = solarCost.textContent;
+    sim.triggerEvent('subsidy');
+    const cheap = { cost: sim.buildCost('solar'), full: EG.BUILD.solar.cost };
+    return {
+      tools: tools.length, kinds, groups, withIcon, withAtlas,
+      poor, rich, normal: +normal, cheap,
+      lineIcon: document.querySelector('.tool[data-tool="line"] .ico').classList.contains('ico-line'),
+      panGlyph: document.querySelector('.tool[data-tool="pan"] .ico').textContent,
+    };
+  });
+  await nextFrames(2);
+  const toolbarAfter = await page.evaluate(() => ({
+    solar: +document.querySelector('.tool[data-tool="solar"] .cost').textContent,
+    sale: document.querySelector('.tool[data-tool="solar"] .cost').classList.contains('sale'),
+  }));
+  console.log('panel nástrojů:', JSON.stringify({ ...toolbar, po: toolbarAfter }));
+  if (toolbar.groups.length !== 4) throw new Error('nástroje nejsou po skupinách: ' + JSON.stringify(toolbar.groups));
+  if (toolbar.tools !== toolbar.kinds + 2) {
+    throw new Error('v panelu chybí nástroje: ' + toolbar.tools + ' vs ' + (toolbar.kinds + 2));
+  }
+  if (toolbar.withIcon !== toolbar.tools) throw new Error('některý nástroj nemá ikonku');
+  if (!(toolbar.withAtlas > 10)) throw new Error('ikonky se neberou z herního atlasu: ' + toolbar.withAtlas);
+  if (!toolbar.lineIcon || !toolbar.panGlyph) throw new Error('vedení a prohlížení nemají vlastní ikonku');
+  if (!toolbar.poor.includes('nuclear')) throw new Error('drahá stavba se při málu peněz nezešedne');
+  if (toolbar.rich !== 0) throw new Error('s plnou kasou se pořád něco tváří jako nedostupné: ' + toolbar.rich);
+  if (!(toolbarAfter.solar < toolbar.normal) || !toolbarAfter.sale) {
+    throw new Error('dotace se nepromítla do ceny v panelu: ' + toolbarAfter.solar + ' vs ' + toolbar.normal);
+  }
+
+  // --- info pod kurzorem: rozvodna nic nevyrábí, ať tam nesvítí 0/0 ---
+  const hoverText = await page.evaluate(async () => {
+    const { sim, renderer } = EG.game;
+    const cv = renderer.canvas;
+    const W = cv.clientWidth, H = cv.clientHeight;
+    const sub = sim.buildings.find((b) => b.kind === 'sub');
+    const gen = sim.buildings.find((b) => b.kind === 'coal' || b.kind === 'hydro');
+    const look = (b) => {
+      const [wx, wy] = renderer.tileToWorld(b.x, b.y);
+      renderer.cam.x = wx; renderer.cam.y = wy;
+      cv.dispatchEvent(new MouseEvent('mousemove', {
+        clientX: W / 2, clientY: H / 2, bubbles: true, button: 0,
+      }));
+      return document.getElementById('hover-info').textContent;
+    };
+    return { sub: look(sub), gen: gen ? look(gen) : null };
+  });
+  console.log('info pod kurzorem:', JSON.stringify(hoverText));
+  if (!hoverText.sub.includes('Rozvodna')) throw new Error('kurzor nad rozvodnou ji nepozná: ' + hoverText.sub);
+  if (/\b0\s*\/\s*0 MW/.test(hoverText.sub)) {
+    throw new Error('u rozvodny pořád svítí výkon 0/0: ' + hoverText.sub);
+  }
+  if (!hoverText.sub.includes('přípojnice') || !hoverText.sub.includes('pole ')) {
+    throw new Error('u rozvodny chybí přípojnice a pole: ' + hoverText.sub);
+  }
+  if (hoverText.gen && !/\d+ \/ \d+ MW/.test(hoverText.gen)) {
+    throw new Error('u elektrárny naopak výkon chybí: ' + hoverText.gen);
+  }
+
   // --- mapa podle skutečné krajiny: čtení odkazu a výřez ---
   const place = await page.evaluate(() => {
     const p = EG.parsePlace;

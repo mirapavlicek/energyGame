@@ -255,6 +255,25 @@ rok. HUD ukazuje 🧾 rozjetý hospodářský výsledek a v popisku i odhad odvo
 - Kdyby na odvody nezbylo, **nedoplatek pokryje provozní úvěr** – hra tě
   nepošle rovnou do bankrotu, ale dluh začne nabíhat úroky.
 
+### Stavění
+
+Panel nástrojů vlevo je rozdělený na **Nástroje, Síť, Zdroje a Úložiště**,
+ikonky jsou výřezy z herního atlasu (takže vypadají přesně jako to, co
+postavíš) a u každé položky je klávesová zkratka a cena. Co si zrovna
+nemůžeš dovolit, **zešedne a cena zčervená**; když běží dotační program,
+cena soláru a větrníku sama klesne a zezelená.
+
+U kurzoru se při stavbě ukazuje **cenovka**:
+
+- u budovy její cena, nebo červeně důvod, proč na tu dlaždici nejde,
+- u vedení **délka trasy a přesná cena**, která roste se vzdáleností
+  (podzemní kabel stojí 2,5×). Než klikneš na začátek, ukazuje cenu za
+  dlaždici; při míření na cílovou stavbu už konečnou částku, a u druhého
+  systému na téže trase i to, že se platí jen 70 % za společné stožáry.
+
+Cenu počítá stejná funkce, která ji pak strhne, takže se cenovka a účet
+nemůžou rozejít.
+
 ## Ovládání
 
 | Vstup | Akce |

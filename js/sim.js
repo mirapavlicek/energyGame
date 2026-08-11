@@ -488,14 +488,21 @@
     return { ok: false, why: '?' };
   };
 
+  /* Aktuální cena stavby. Dotační program zlevňuje obnovitelné zdroje,
+     takže se na ni ptá i UI, aby cenovka u kurzoru ukazovala i slevu. */
+  Sim.prototype.buildCost = function (kind) {
+    const def = BUILD[kind];
+    if (!def) return 0;
+    if ((kind === 'solar' || kind === 'wind' || kind === 'owind') && this.activeEvents('subsidy').length > 0) {
+      return Math.ceil(def.cost * 0.7);
+    }
+    return def.cost;
+  };
+
   Sim.prototype.place = function (kind, x, y) {
     const chk = this.canPlace(kind, x, y);
     if (!chk.ok) { this.msg(chk.why, 'warn'); return null; }
-    let cost = BUILD[kind].cost;
-    // dotační program: OZE se staví levněji
-    if ((kind === 'solar' || kind === 'wind' || kind === 'owind') && this.activeEvents('subsidy').length > 0) {
-      cost = Math.ceil(cost * 0.7);
-    }
+    const cost = this.buildCost(kind);
     if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
     this.money -= cost;
     const b = {
@@ -691,62 +698,77 @@
     return true;
   };
 
-  /* level = napěťová úroveň (klíč LINE_TYPES); bez udání se vybere
-     nejvyšší úroveň, kterou podporují obě stavby */
-  Sim.prototype.connect = function (b1, b2, level, cable) {
-    if (b1 === b2) return null;
+  /* Rozpočet trasy: co by stálo natáhnout vedení mezi dvě stavby, nebo
+     proč to nejde. Používá to i UI, aby cena byla vidět dřív, než se
+     klikne – a hlavně aby se počítala jen na jednom místě.
+     `level` bez udání = nejvyšší úroveň, kterou podporují obě stavby. */
+  Sim.prototype.lineQuote = function (b1, b2, level, cable) {
+    const no = (why) => ({ ok: false, why, cost: 0, len: 0 });
+    if (!b1 || !b2 || b1 === b2) return no('Vedení musí spojit dvě různé stavby');
     // elektrárny (ani zásobníky či hraniční body) se neřetězí napřímo –
     // výkon se vždy vyvádí přes rozvodnu
     if (b1.kind !== 'sub' && b2.kind !== 'sub') {
-      this.msg('Vedení musí končit v rozvodně – elektrárny se neřetězí', 'warn');
-      return null;
+      return no('Vedení musí končit v rozvodně – elektrárny se neřetězí');
     }
     if (level === undefined) {
       level = LEVELS.find((lv) => this.supportsLevel(b1, lv) && this.supportsLevel(b2, lv));
-      if (level === undefined) { this.msg('Stavby nemají společnou napěťovou úroveň (chybí trafo?)', 'warn'); return null; }
+      if (level === undefined) return no('Stavby nemají společnou napěťovou úroveň (chybí trafo?)');
     }
     const LT = LINE_TYPES[level];
-    if (!LT) return null;
+    if (!LT) return no('Neznámá napěťová úroveň');
     for (const b of [b1, b2]) {
       if (!this.supportsLevel(b, level)) {
-        this.msg(BUILD[b.kind].name + ' nemá přípojnici ' + LT.name +
-          (b.kind === 'sub' ? ' – kup příslušné trafo' : ' (vyrábí na ' + LINE_TYPES[GEN_LEVEL[b.kind]].name + ')'), 'warn');
-        return null;
+        return no(BUILD[b.kind].name + ' nemá přípojnici ' + LT.name +
+          (b.kind === 'sub' ? ' – kup příslušné trafo' : ' (vyrábí na ' + LINE_TYPES[GEN_LEVEL[b.kind]].name + ')'));
       }
     }
-    const dist = Math.hypot(b1.x - b2.x, b1.y - b2.y);
-    if (dist > LT.maxLen) { this.msg(LT.name + ': příliš daleko (max ' + LT.maxLen + ' dlaždic)', 'warn'); return null; }
+    const len = Math.hypot(b1.x - b2.x, b1.y - b2.y);
+    const far = { ok: false, why: LT.name + ': příliš daleko (max ' + LT.maxLen + ' dlaždic)', cost: 0, len, level };
+    if (len > LT.maxLen) return far;
     // stejná trasa a hladina: přidá se další paralelní systém (max 4),
     // na společných stožárech za 70 % ceny – kapacita i vodivost se násobí
     const existing = this.lines.find((l) => l.level === level &&
       ((l.a === b1.id && l.b === b2.id) || (l.a === b2.id && l.b === b1.id)));
     if (existing) {
-      if (existing.n >= 4) { this.msg(LT.name + ': maximum jsou 4 systémy na trase', 'warn'); return null; }
-      const cost = Math.ceil(dist * LT.cost * 0.7);
-      if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
-      this.money -= cost;
-      existing.n++;
-      existing.cap = LT.cap * existing.n;
-      this.msg(LT.name + ': posíleno na ' + existing.n + '× (kapacita ' + existing.cap + ' MW, −' + cost + ')');
-      return existing;
+      if (existing.n >= 4) {
+        return { ok: false, why: LT.name + ': maximum jsou 4 systémy na trase', cost: 0, len, level };
+      }
+      return {
+        ok: true, cost: Math.ceil(len * LT.cost * 0.7), len, level, existing,
+        note: 'posílení na ' + (existing.n + 1) + '× (kapacita ' + (LT.cap * (existing.n + 1)) + ' MW)',
+      };
     }
     // volná pole rozvodny (jen nová linka, posílení pole nezabírá)
     for (const b of [b1, b2]) {
       if (b.kind === 'sub' && this.fieldsUsed(b) >= this.fieldLimit(b)) {
-        this.msg('Rozvodna [' + b.x + ',' + b.y + '] nemá volné pole (' + this.fieldLimit(b) +
-          ') – modernizuj ji', 'warn');
-        return null;
+        return {
+          ok: false, cost: 0, len, level,
+          why: 'Rozvodna [' + b.x + ',' + b.y + '] nemá volné pole (' + this.fieldLimit(b) + ') – modernizuj ji',
+        };
       }
     }
-    const cost = Math.ceil(dist * LT.cost * (cable ? 2.5 : 1));
-    if (this.money < cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
-    this.money -= cost;
+    return { ok: true, cost: Math.ceil(len * LT.cost * (cable ? 2.5 : 1)), len, level };
+  };
+
+  Sim.prototype.connect = function (b1, b2, level, cable) {
+    const q = this.lineQuote(b1, b2, level, cable);
+    if (!q.ok) { if (q.why) this.msg(q.why, 'warn'); return null; }
+    if (this.money < q.cost) { this.msg('Nedostatek peněz', 'warn'); return null; }
+    const LT = LINE_TYPES[q.level];
+    this.money -= q.cost;
+    if (q.existing) {
+      const existing = q.existing;
+      existing.n++;
+      existing.cap = LT.cap * existing.n;
+      this.msg(LT.name + ': posíleno na ' + existing.n + '× (kapacita ' + existing.cap + ' MW, −' + q.cost + ')');
+      return existing;
+    }
     const l = {
-      id: this.nextId++, a: b1.id, b: b2.id, level, n: 1, cap: LT.cap,
-      cable: !!cable, cond: 1, broken: false, flow: 0, load: 0, len: dist,
+      id: this.nextId++, a: b1.id, b: b2.id, level: q.level, n: 1, cap: LT.cap,
+      cable: !!cable, cond: 1, broken: false, flow: 0, load: 0, len: q.len,
     };
     this.lines.push(l);
-    this.msg(LT.name + (cable ? ' (podzemní kabel)' : '') + ' nataženo (−' + cost + ')');
+    this.msg(LT.name + (cable ? ' (podzemní kabel)' : '') + ' nataženo (−' + q.cost + ')');
     return l;
   };
 

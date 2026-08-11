@@ -136,7 +136,8 @@ html, body {
 /* fotorežim (klávesa P): schová celé UI */
 body.photo #hud, body.photo #toolbar, body.photo #linebar, body.photo #help,
 body.photo #btn-help, body.photo #minimap, body.photo #log, body.photo #hover-info,
-body.photo #bpanel, body.photo #import-dlg, body.photo #objlist { display: none !important; }
+body.photo #bpanel, body.photo #import-dlg, body.photo #objlist,
+body.photo #build-cost { display: none !important; }
 
 /* ---------- horní HUD ---------- */
 #hud {
@@ -173,29 +174,72 @@ body.photo #bpanel, body.photo #import-dlg, body.photo #objlist { display: none 
   border-radius: 10px;
   padding: 8px;
   backdrop-filter: blur(4px);
-  max-width: 210px;
+  max-width: 232px;
   max-height: calc(100vh - 120px);
   overflow-y: auto;
 }
+/* nadpis skupiny nástrojů (Nástroje / Síť / Zdroje / Úložiště) */
+.tool-group {
+  font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #74838f; padding: 6px 8px 2px; margin-top: 2px;
+  border-top: 1px solid #23303c;
+}
+.tool-group:first-child { margin-top: 0; border-top: none; padding-top: 2px; }
+
 .tool {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 7px;
   background: transparent; border: 1px solid transparent;
-  color: #cdd6de; font-size: 13px; text-align: left;
-  padding: 6px 8px; border-radius: 7px; cursor: pointer;
+  color: #cdd6de; font-size: 12.5px; text-align: left;
+  padding: 3px 7px; border-radius: 7px; cursor: pointer;
+  width: 100%;
 }
 .tool:hover { background: rgba(255, 255, 255, 0.07); }
 .tool.active { background: #274a68; border-color: #4a80ab; color: #fff; }
-.tool .key {
-  display: inline-block; min-width: 18px; text-align: center;
-  background: #222d38; border: 1px solid #3c4c5c; border-radius: 4px;
-  font-size: 11px; padding: 1px 3px; color: #9fb2c2;
+/* na co nemáš, je vidět na první pohled */
+.tool.cant { opacity: 0.45; }
+.tool.cant .cost { color: #ff6a5a; }
+.tool .ico {
+  flex: none; width: 26px; height: 26px;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
 }
-.tool .cost { margin-left: auto; font-size: 11px; color: #e8c84a; }
+.tool .ico-glyph {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-style: normal;
+}
+.tool .ico-line {
+  border-radius: 4px;
+  background: linear-gradient(45deg,
+    transparent 38%, var(--line-col, #9aa5b0) 38%, var(--line-col, #9aa5b0) 62%, transparent 62%);
+}
+.tool .name { flex: 1; line-height: 1.2; }
+.tool .key {
+  flex: none; min-width: 16px; text-align: center;
+  background: #222d38; border: 1px solid #3c4c5c; border-radius: 4px;
+  font-size: 10.5px; padding: 0 3px; color: #9fb2c2;
+}
+.tool .cost {
+  flex: none; min-width: 34px; text-align: right;
+  font-size: 11px; color: #e8c84a; font-variant-numeric: tabular-nums;
+}
+.tool .cost.sale { color: #5dbb63; }
+
+/* cenovka u kurzoru při stavbě */
+#build-cost {
+  position: absolute; z-index: 12;
+  background: rgba(10, 14, 19, 0.92);
+  border: 1px solid #45596e; border-radius: 7px;
+  padding: 4px 9px; font-size: 12.5px; white-space: nowrap;
+  color: #e8edf2; pointer-events: none;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+#build-cost[hidden] { display: none; }
+#build-cost.bad { border-color: #7d3a33; color: #ff9a8d; }
 
 /* ---------- výběr napětí vedení ---------- */
 #linebar[hidden] { display: none; }
 #linebar {
-  position: absolute; left: 228px; top: 54px;
+  position: absolute; left: 250px; top: 54px;
   display: flex; flex-direction: column; gap: 3px;
   background: rgba(10, 14, 19, 0.82);
   border: 1px solid #2c3a48;

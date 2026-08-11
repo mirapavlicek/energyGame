@@ -1058,6 +1058,10 @@
   function setLineLevel(lv) {
     lineLevel = lv;
     lineFrom = null;
+    // ikonka nástroje „Vedení" nese barvu zvolené napěťové úrovně
+    const c = LEVEL_COLOR[lv] || [0.7, 0.75, 0.8];
+    document.documentElement.style.setProperty('--line-col',
+      'rgb(' + Math.round(c[0] * 255) + ',' + Math.round(c[1] * 255) + ',' + Math.round(c[2] * 255) + ')');
     document.querySelectorAll('.linelvl').forEach((el) => {
       el.classList.toggle('active', +el.dataset.level === lv);
     });
@@ -1096,33 +1100,104 @@
     document.querySelector('.linelvl[data-level="110"]').classList.add('active');
   }
 
+  /* Nástroje po skupinách: v jednom dlouhém sloupci se hledalo špatně.
+     Pořadí míří na to, co se používá nejčastěji – nejdřív prohlížení
+     a bourání, pak síť, zdroje a nakonec úložiště. */
+  const TOOL_GROUPS = [
+    { name: 'Nástroje', tools: ['pan', 'demolish'] },
+    { name: 'Síť', tools: ['sub', 'line'] },
+    { name: 'Zdroje', tools: ['hydro', 'dam', 'coal', 'gas', 'nuclear', 'solar', 'wind', 'owind', 'geo', 'bio', 'waste'] },
+    { name: 'Úložiště', tools: ['battery', 'bess', 'psh', 'h2', 'tesla'] },
+  ];
+
+  const TOOL_EXTRA = {
+    pan: { label: 'Prohlížet', key: 'Q', glyph: '🔍',
+      desc: 'Klikni na stavbu, vedení nebo město a otevře se jeho panel.' },
+    demolish: { label: 'Zbourat', key: 'X', glyph: '🗑',
+      desc: 'Bourá budovy (vrátí 40 % ceny) i vedení – klikni přímo na linku; ' +
+        'vícenásobné trasy se odpojují po jednom systému.' },
+  };
+
+  let atlasUrl = '';
+
+  /* Ikonky nástrojů jsou výřezy z herního atlasu, takže vypadají přesně
+     jako to, co se postaví, a repozitář nepotřebuje žádné obrázky.
+     Vedení má místo spritu proužek v barvě zvoleného napětí. */
+  function toolIcon(t, extra) {
+    const el = document.createElement('i');
+    el.className = 'ico';
+    if (t === 'line') { el.classList.add('ico-line'); return el; }
+    if (extra.glyph) { el.classList.add('ico-glyph'); el.textContent = extra.glyph; return el; }
+    const sprite = kindSprite(t);
+    if (sprite === undefined) return el;
+    const A = EG.atlas;
+    const s = 0.62;                                   // zmenšení buňky atlasu
+    const cw = A.CELL_W * s, ch = A.CELL_H * s;
+    const col = sprite % A.COLS, row = Math.floor(sprite / A.COLS);
+    el.style.backgroundImage = 'url(' + atlasUrl + ')';
+    el.style.backgroundSize = (A.COLS * cw) + 'px ' + (A.ROWS * ch) + 'px';
+    // výřez kolem stavby: kotva (základna) je dole uprostřed buňky
+    el.style.backgroundPosition = (-(col * cw + 6)) + 'px ' + (-(row * ch + 25)) + 'px';
+    return el;
+  }
+
   function setupToolbar() {
     const bar = $('#toolbar');
-    const tools = [
-      { t: 'pan', label: 'Prohlížet', key: 'Q' },
-      ...Object.entries(EG.BUILD).filter(([, v]) => !v.hidden).map(([k, v]) => ({
-        t: k, label: v.name, key: v.hotkey ? v.hotkey.toUpperCase() : '·', cost: v.cost, desc: v.desc,
-      })),
-      {
-        t: 'demolish', label: 'Zbourat', key: 'X',
-        desc: 'Bourá budovy (vrátí 40 % ceny) i vedení – klikni přímo na linku; vícenásobné trasy se odpojují po jednom systému.',
-      },
-    ];
-    for (const def of tools) {
-      const el = document.createElement('button');
-      el.className = 'tool';
-      el.dataset.tool = def.t;
-      el.innerHTML = '<span class="key">' + def.key + '</span>' + def.label +
-        (def.cost ? '<span class="cost">' + def.cost + (def.t === 'line' ? '/dl' : '') + '</span>' : '');
-      if (def.desc) el.title = def.desc;
-      el.addEventListener('click', () => setTool(def.t));
-      bar.appendChild(el);
+    atlasUrl = renderer.atlasCanvas.toDataURL();
+    for (const grp of TOOL_GROUPS) {
+      const head = document.createElement('div');
+      head.className = 'tool-group';
+      head.textContent = grp.name;
+      bar.appendChild(head);
+      for (const t of grp.tools) {
+        const def = EG.BUILD[t];
+        const extra = TOOL_EXTRA[t] || {};
+        if (!def && !extra.label) continue;
+        const el = document.createElement('button');
+        el.className = 'tool';
+        el.dataset.tool = t;
+        el.appendChild(toolIcon(t, extra));
+        const name = document.createElement('span');
+        name.className = 'name';
+        name.textContent = extra.label || def.name;
+        el.appendChild(name);
+        const key = extra.key || (def && def.hotkey ? def.hotkey.toUpperCase() : '');
+        if (key) {
+          const k = document.createElement('span');
+          k.className = 'key';
+          k.textContent = key;
+          el.appendChild(k);
+        }
+        if (def && def.cost) {
+          const c = document.createElement('span');
+          c.className = 'cost';
+          c.dataset.kind = t;
+          c.textContent = def.cost;
+          el.appendChild(c);
+        }
+        el.title = (extra.desc || (def && def.desc) || '') +
+          (def && def.cost ? '\n\nCena ' + def.cost + ' €.' : '');
+        el.addEventListener('click', () => setTool(t));
+        bar.appendChild(el);
+      }
     }
     setTool('pan');
     $('#btn-speed').addEventListener('click', () => {
       speed = speed === 0 ? 1 : speed >= 4 ? 0 : speed * 2;
       updateSpeedLabel();
     });
+  }
+
+  /* Co si právě nemůžeš dovolit, ať je poznat na první pohled –
+     a když běží dotace, cena u soláru a větrníku sama zlevní. */
+  function updateToolPrices() {
+    for (const el of document.querySelectorAll('#toolbar .cost')) {
+      const cost = sim.buildCost(el.dataset.kind);
+      if (el._cost !== cost) { el._cost = cost; el.textContent = cost; }
+      const cheap = cost < EG.BUILD[el.dataset.kind].cost;
+      el.classList.toggle('sale', cheap);
+      el.parentElement.classList.toggle('cant', sim.money < cost);
+    }
   }
 
   function updateSpeedLabel() {
@@ -1813,6 +1888,60 @@
     }
   }
 
+  /* Cenovka u kurzoru. U vedení je to hlavní věc, kterou hráč potřebuje
+     vidět ještě před druhým klikem – cena roste s délkou trasy a u
+     kabelu je dvaapůlkrát vyšší. */
+  function updateBuildCost() {
+    const el = $('#build-cost');
+    if (tool === 'pan' || tool === 'demolish' || replaying || sim.gameOver) { el.hidden = true; return; }
+    const [gx, gy] = hover;
+    if (gx < 0 || gy < 0 || gx >= map.size || gy >= map.size) { el.hidden = true; return; }
+    let text = '', bad = false;
+
+    if (tool === 'line') {
+      const LT = EG.LINE_TYPES[lineLevel];
+      const perTile = Math.round(LT.cost * (lineCable ? 2.5 : 1));
+      if (!lineFrom) {
+        text = LT.name + (lineCable ? ' · kabel' : '') + ' · ' + perTile + ' €/dl · klikni na začátek';
+      } else {
+        const to = sim.buildingAt(gx, gy);
+        const len = Math.hypot(lineFrom.x - gx, lineFrom.y - gy);
+        const q = to ? sim.lineQuote(lineFrom, to, lineLevel, lineCable) : null;
+        if (q && q.ok) {
+          text = LT.name + ' · ' + q.len.toFixed(1) + ' dl · −' + q.cost + ' €' +
+            (q.note ? ' · ' + q.note : '');
+          if (sim.money < q.cost) { text += ' · nemáš dost'; bad = true; }
+        } else if (q) {
+          text = q.why;
+          bad = true;
+        } else {
+          // ještě nemíříme na stavbu: aspoň odhad podle vzdušné čáry
+          text = LT.name + ' · ' + len.toFixed(1) + ' dl · ~' + Math.ceil(len * LT.cost * (lineCable ? 2.5 : 1)) + ' €';
+          if (len > LT.maxLen) { text += ' · PŘÍLIŠ DALEKO (max ' + LT.maxLen + ' dl)'; bad = true; }
+          else text += ' · veď na stavbu';
+        }
+      }
+    } else {
+      const def = EG.BUILD[tool];
+      if (!def) { el.hidden = true; return; }
+      const cost = sim.buildCost(tool);
+      const chk = sim.canPlace(tool, gx, gy);
+      if (!chk.ok) { text = def.name + ' · ' + chk.why; bad = true; }
+      else {
+        text = def.name + ' · −' + cost + ' €' + (cost < def.cost ? ' (dotace)' : '');
+        if (sim.money < cost) { text += ' · nemáš dost'; bad = true; }
+      }
+    }
+
+    el.hidden = false;
+    el.classList.toggle('bad', bad);
+    el.textContent = text;
+    // u pravého či dolního okraje se cenovka překlopí, ať nevyjede z obrazu
+    const w = el.offsetWidth || 200, h = el.offsetHeight || 24;
+    el.style.left = Math.min(mouse.x + 18, window.innerWidth - w - 8) + 'px';
+    el.style.top = Math.min(mouse.y + 20, window.innerHeight - h - 8) + 'px';
+  }
+
   function updateHoverInfo() {
     const [gx, gy] = hover;
     const el = $('#hover-info');
@@ -1823,16 +1952,33 @@
     if (t === 6) s += ' · průtok ' + map.flow[map.idx(gx, gy)].toFixed(1);
     const b = sim.buildingAt(gx, gy);
     if (b) {
+      /* Výkon dává smysl jen u výroben. Rozvodna ani hraniční bod nic
+         nevyrábí, takže by u nich věčně svítilo „0/0 MW"; místo toho
+         je zajímavější, co jimi teče a co mají za přípojnice. */
+      const sd = EG.STORAGE[b.kind];
       s += ' · ' + EG.BUILD[b.kind].name;
-      if (b.kind !== 'sub') s += ' (' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + ')';
-      s += ' ' + b.out.toFixed(0) + '/' + b.gen.toFixed(0) + ' MW';
-      s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round(b.cond * 100) + ' %';
+      if (b.kind === 'sub') {
+        s += ' · přípojnice ' + sim.levelsOf(b)
+          .map((lv) => EG.LINE_TYPES[lv].name.replace(/^(VVN|VN|NN) /, '')).join(', ');
+        const thru = (sim.cityAssign || [])
+          .filter((ca) => ca.sub >= 0 && sim.buildings[ca.sub] === b)
+          .reduce((sum, ca) => sum + ca.served, 0);
+        s += ' · odběr ' + thru.toFixed(0) + ' MW · pole ' + sim.fieldsUsed(b) + '/' + sim.fieldLimit(b);
+      } else if (b.kind === 'xborder') {
+        s += ' · ' + b.name + ' · import ' + b.xImport + ' MW · export ' +
+          (b.xServed || 0).toFixed(0) + '/' + b.xExport + ' MW';
+      } else if (sd) {
+        s += ' (' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + ') · ' + b.storMode + ' ' +
+          Math.abs(b.out).toFixed(0) + ' MW · zásoba ' + Math.round(b.charge / sd.cap * 100) + ' %';
+      } else {
+        s += ' (' + EG.LINE_TYPES[EG.GEN_LEVEL[b.kind]].name + ') · ' +
+          b.out.toFixed(0) + ' / ' + b.gen.toFixed(0) + ' MW';
+      }
+      if (b.kind !== 'xborder') {
+        s += b.broken ? ' · PORUCHA' : ' · stav ' + Math.round((b.cond === undefined ? 1 : b.cond) * 100) + ' %';
+      }
       const fd = EG.fuelDefOf(b);
       if (fd) s += b.fuel > 0 ? ' · ' + fd.name + ' ' + Math.round(b.fuel / fd.cap * 100) + ' %' : ' · BEZ PALIVA';
-      const sd = EG.STORAGE[b.kind];
-      if (sd) s += ' · zásoba ' + Math.round(b.charge / sd.cap * 100) + ' % · ' + b.storMode;
-      if (b.kind === 'xborder') s += ' · ' + b.name + ' · import ' + b.xImport + ' MW · export ' +
-        (b.xServed || 0).toFixed(0) + '/' + b.xExport + ' MW';
     }
     const ind = (map.industries || []).find((o) => Math.abs(o.x - gx) <= 1 && Math.abs(o.y - gy) <= 1);
     if (ind) {
@@ -2400,6 +2546,8 @@
     renderer.render(t / 1000);
     drawMinimap();
     updateHUD();
+    updateToolPrices();
+    updateBuildCost();
     if (chartOn) drawChart();
     if (selected || selectedLine || selectedCity) updatePanel();
     requestAnimationFrame(loop);
