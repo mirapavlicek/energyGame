@@ -2181,20 +2181,47 @@ const server = http.createServer((req, res) => {
     const visibleInLine = disp() !== 'none';
     const lvlBtns = [...document.querySelectorAll('.linelvl[data-level]')];
     const nLevels = lvlBtns.length;
-    const maxLens = lvlBtns.map((el) => {
-      const m = el.textContent.match(/max (\d+) dl/);
-      return m ? +m[1] : null;
-    });
+    const cell = (el, cls) => {
+      const c = el.querySelector(cls);
+      return c ? parseFloat(c.textContent) : null;
+    };
+    const maxLens = lvlBtns.map((el) => cell(el, '.lv-len'));
+    const caps = lvlBtns.map((el) => cell(el, '.lv-cap'));
+    const costs = lvlBtns.map((el) => cell(el, '.lv-cost'));
     const maxLensDiffer = new Set(maxLens).size === maxLens.length && !maxLens.includes(null);
+    // údaje v liště musí sedět s tím, co o hladině tvrdí simulace
+    const dataOk = lvlBtns.every((el) => {
+      const LT = EG.LINE_TYPES[+el.dataset.level];
+      return cell(el, '.lv-cap') === LT.cap && cell(el, '.lv-len') === LT.maxLen &&
+        cell(el, '.lv-cost') === LT.cost;
+    });
+    const groups = [...document.querySelectorAll('#linebar .line-group')].map((el) => el.textContent);
+    // přepínač kabelu je zvlášť, ne jako další napěťová úroveň
+    const cbl = document.getElementById('btn-cable');
+    const cableIsLevel = cbl.dataset.level !== undefined;
+    cbl.click();
+    const cableOn = cbl.classList.contains('active');
+    cbl.click();
+    const cableOff = !cbl.classList.contains('active');
+
     document.querySelector('.linelvl[data-level="400"]').click();
+    const activeAfterClick = document.querySelector('.linelvl.active').dataset.level;
     document.querySelector('.tool[data-tool="pan"]').click();
     const hiddenAgain = disp() === 'none';
-    return { hiddenInPan, visibleInLine, nLevels, hiddenAgain, maxLens, maxLensDiffer };
+    return {
+      hiddenInPan, visibleInLine, nLevels, hiddenAgain, maxLens, maxLensDiffer,
+      caps, costs, dataOk, groups, cableIsLevel, cableOn, cableOff, activeAfterClick,
+    };
   });
   console.log('paleta napětí:', JSON.stringify(linebar));
   if (!linebar.hiddenInPan || !linebar.visibleInLine || !linebar.hiddenAgain) throw new Error('paleta napětí se špatně schovává/ukazuje');
   if (linebar.nLevels !== 10) throw new Error('má být 10 napěťových úrovní (vč. HVDC a dvou DC), je ' + linebar.nLevels);
   if (!linebar.maxLensDiffer) throw new Error('každá úroveň má mít vlastní max. délku v popisku: ' + JSON.stringify(linebar.maxLens));
+  if (!linebar.dataOk) throw new Error('čísla v liště nesedí s parametry hladin: ' + JSON.stringify(linebar));
+  if (linebar.groups.length !== 4) throw new Error('hladiny nejsou po skupinách: ' + JSON.stringify(linebar.groups));
+  if (linebar.cableIsLevel) throw new Error('podzemní kabel se tváří jako napěťová úroveň');
+  if (!linebar.cableOn || !linebar.cableOff) throw new Error('přepínač kabelu se nepřepíná');
+  if (linebar.activeAfterClick !== '400') throw new Error('klik na hladinu ji nezvýraznil: ' + linebar.activeAfterClick);
 
   // --- max. délky se u úrovní liší a vynucují se ---
   const maxLen = await page.evaluate(() => {

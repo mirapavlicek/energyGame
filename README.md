@@ -274,6 +274,12 @@ U kurzoru se při stavbě ukazuje **cenovka**:
 Cenu počítá stejná funkce, která ji pak strhne, takže se cenovka a účet
 nemůžou rozejít.
 
+Lišta napětí (nástroj **Vedení**) je rozdělená podle tříd – velmi vysoké,
+vysoké, nízké a stejnosměrné – a u každé hladiny stojí v zarovnaných
+sloupcích **kapacita, maximální délka a cena za dlaždici**. Tloušťka
+barevného proužku napovídá, kolik hladina unese. Podzemní kabel není
+napěťová úroveň, takže je dole jako samostatný přepínač.
+
 ## Ovládání
 
 | Vstup | Akce |
@@ -425,7 +431,10 @@ popisek prozradí, kolik dlaždic terénu se z mapy opravdu kreslí.
   budov/kurzorů, aditivní vrstva záře a vedení jako instancované segmenty
   s animovanými „pakety" energie ve fragment shaderu.
 - **Sprite atlas** se generuje procedurálně do canvasu při startu – repozitář
-  neobsahuje žádné binární assety.
+  neobsahuje žádné binární assety. Sdílené primitivy (dlaždice, kvádr,
+  sedlová střecha, vyvýšený blok, strom) řeší stínování za všechny stavby
+  najednou: světlo zleva shora, svislý přechod na stěnách, světlá hrana
+  na hřebeni a **měkký kontaktní stín**, který stavbu posadí na zem.
 - Deterministický RNG (mulberry32) + hodnotový fBm šum pro terén.
 - Čistý vanilla JS (ES2020), bez frameworků a bez build kroku.
 

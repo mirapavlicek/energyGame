@@ -1,7 +1,7 @@
 # ⚡ EnergyGame – roadmapa rozšíření
 
 Zásobník nápadů na další vývoj hry, seskupený do oblastí.
-Všech 80 položek je implementováno (✅), byť některé ve zjednodušené podobě.
+Všech 81 položek je implementováno (✅), byť některé ve zjednodušené podobě.
 
 ## Zdroje a technologie
 
@@ -146,6 +146,11 @@ Všech 80 položek je implementováno (✅), byť některé ve zjednodušené po
 54. ✅ Undo posledního kroku (Ctrl+Z) – – vrácení poslední stavby/demolice.
 55. ✅ Seznam objektů (📋) s filtrem a skokem kamery. Původně: tabulka všech elektráren/rozvoden
     s filtrací (stav, zatížení, smlouvy) a skokem kamery.
+81. ✅ Plastičtější sprity a čitelná lišta napětí – stavby dostaly měkký
+    kontaktní stín, svislé přechody na stěnách a světlé hrany, domy
+    skutečnou sedlovou střechu místo barevného víka a stromy vlastní
+    stín. Lišta napětí je rozdělená podle tříd a čísla (kapacita, max.
+    délka, cena za dlaždici) stojí v zarovnaných sloupcích.
 80. ✅ Cenovka u kurzoru a přehlednější panel nástrojů – při stavbě je
     vidět cena (u vedení délka trasy i konečná částka, která roste se
     vzdáleností), nebo červeně důvod, proč to nejde. Nástroje jsou

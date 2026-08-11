@@ -1,5 +1,5 @@
 /* Service worker: offline provoz PWA (cache-first s obnovou na pozadí). */
-const CACHE = 'energygame-v8';
+const CACHE = 'energygame-v9';
 const CORE = [
   './', 'index.html', 'style.css', 'manifest.webmanifest',
   'js/rng.js', 'js/map.js', 'js/atlas.js', 'js/renderer.js', 'js/sim.js', 'js/osm.js',

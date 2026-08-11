@@ -927,9 +927,10 @@
       const byHotkey = Object.entries(EG.BUILD).find(([, v]) => v.hotkey === k);
       if (byHotkey) {
         if (byHotkey[0] === 'line' && tool === 'line') {
-          // opakovaný stisk 7 cykluje napěťové úrovně
-          const i = EG.LEVELS.indexOf(lineLevel);
-          setLineLevel(EG.LEVELS[(i + 1) % EG.LEVELS.length]);
+          // opakovaný stisk 7 cykluje napěťové úrovně v pořadí, v jakém
+          // jsou v liště – ať klávesa a klikání jdou stejnou cestou
+          const i = LINE_ORDER.indexOf(lineLevel);
+          setLineLevel(LINE_ORDER[(i + 1) % LINE_ORDER.length]);
         } else setTool(byHotkey[0]);
       }
       else if (k === 'escape') { if (selected || selectedLine || selectedCity) closePanel(); else setTool('pan'); }
@@ -1069,27 +1070,55 @@
     sim.msg('Vedení: ' + LT.name + ' (kapacita ' + LT.cap + ' MW, max ' + LT.maxLen + ' dl.)');
   }
 
+  /* Napěťové úrovně po třídách. Vedle sebe je pak vidět, co která
+     hladina umí – v jednom seznamu deseti položek se to ztrácelo. */
+  const LINE_GROUPS = [
+    { name: 'Velmi vysoké napětí', levels: [800, 400, 220, 110] },
+    { name: 'Vysoké napětí', levels: [22, 11] },
+    { name: 'Nízké napětí', levels: [0.4] },
+    { name: 'Stejnosměrné', levels: [500, 1.5, 0.5] },
+  ];
+  const LINE_ORDER = LINE_GROUPS.reduce((a, g) => a.concat(g.levels), []);
+
+  const rgbOf = (lv) => {
+    const [r, g, b] = LEVEL_COLOR[lv] || [0.7, 0.75, 0.8];
+    return 'rgb(' + Math.round(r * 255) + ',' + Math.round(g * 255) + ',' + Math.round(b * 255) + ')';
+  };
+
   function setupLinebar() {
     const bar = $('#linebar');
-    for (const lv of EG.LEVELS) {
-      const LT = EG.LINE_TYPES[lv];
-      const el = document.createElement('button');
-      el.className = 'linelvl';
-      el.dataset.level = lv;
-      const [r, g, b] = LEVEL_COLOR[lv];
-      el.innerHTML = '<span class="swatch" style="background:rgb(' +
-        Math.round(r * 255) + ',' + Math.round(g * 255) + ',' + Math.round(b * 255) + ')"></span>' +
-        LT.name + '<span class="cost">' + LT.cap + ' MW · max ' + LT.maxLen + ' dl · ' + LT.cost + '/dl</span>';
-      el.title = 'Kapacita ' + LT.cap + ' MW, max. délka ' + LT.maxLen + ' dlaždic, cena ' + LT.cost +
-        ' za dlaždici, ztráty ' + (LT.loss * 100).toFixed(2) + ' %/dl při plném zatížení.';
-      el.addEventListener('click', () => setLineLevel(lv));
-      bar.appendChild(el);
+    for (const grp of LINE_GROUPS) {
+      const head = document.createElement('div');
+      head.className = 'line-group';
+      head.textContent = grp.name;
+      bar.appendChild(head);
+      for (const lv of grp.levels) {
+        const LT = EG.LINE_TYPES[lv];
+        const el = document.createElement('button');
+        el.className = 'linelvl';
+        el.dataset.level = lv;
+        // tloušťka proužku napovídá, kolik hladina unese
+        const thick = LT.cap >= 400 ? 6 : LT.cap >= 80 ? 4 : LT.cap >= 30 ? 3 : 2;
+        el.innerHTML =
+          '<span class="swatch"><i style="background:' + rgbOf(lv) + ';height:' + thick + 'px"></i></span>' +
+          '<span class="lv-name">' + LT.name.replace(/^(VVN|VN|NN) /, '') + '</span>' +
+          '<span class="lv-cap">' + LT.cap + ' MW</span>' +
+          '<span class="lv-len">' + LT.maxLen + ' dl</span>' +
+          '<span class="lv-cost">' + LT.cost + ' €/dl</span>';
+        el.title = LT.name + ': kapacita ' + LT.cap + ' MW, max. délka ' + LT.maxLen +
+          ' dlaždic, cena ' + LT.cost + ' € za dlaždici, ztráty ' +
+          (LT.loss * 100).toFixed(2) + ' %/dl při plném zatížení.' +
+          (LT.dc ? '\nStejnosměrná hladina – nemá jalový výkon, ale unese jen krátké trasy.' : '');
+        el.addEventListener('click', () => setLineLevel(lv));
+        bar.appendChild(el);
+      }
     }
-    // přepínač podzemního kabelu
+    // přepínač podzemního kabelu – není to napěťová úroveň, tak stojí zvlášť
     const cbl = document.createElement('button');
-    cbl.className = 'linelvl';
+    cbl.className = 'linelvl cable-toggle';
     cbl.id = 'btn-cable';
-    cbl.innerHTML = '<span class="swatch" style="background:#4a3b2a"></span>Podzemní kabel<span class="cost">2,5× cena</span>';
+    cbl.innerHTML = '<span class="tick">✓</span><span class="lv-name">Podzemní kabel</span>' +
+      '<span class="lv-cost">2,5× cena</span>';
     cbl.title = 'Kabel je dražší, ale odolá bouřkám, má nižší ztráty a netrpí na jalový výkon.';
     cbl.addEventListener('click', () => {
       lineCable = !lineCable;
@@ -1097,7 +1126,7 @@
       sim.msg('Vedení se staví jako ' + (lineCable ? 'podzemní kabel (2,5×)' : 'venkovní linka'));
     });
     bar.appendChild(cbl);
-    document.querySelector('.linelvl[data-level="110"]').classList.add('active');
+    setLineLevel(lineLevel);
   }
 
   /* Nástroje po skupinách: v jednom dlouhém sloupci se hledalo špatně.

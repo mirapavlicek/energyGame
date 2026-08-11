@@ -28,9 +28,51 @@
     ctx.closePath();
   }
 
+  /* --- stínování ---
+     Světlo dopadá zleva shora, stejně jako u dlaždic (světlé horní hrany,
+     tmavé spodní). Z jedné barvy se tak dají odvodit odstíny stěn,
+     k tomu svislý přechod na stěnách a měkký stín, který stavbu posadí
+     na zem. Právě ten stín dělá z plochých kvádrů objekty. */
+  function shade(color, k) {
+    const m = /^#([0-9a-f]{6})$/i.exec(color);
+    if (!m) return color;
+    const n = parseInt(m[1], 16);
+    const c = (v) => Math.max(0, Math.min(255, Math.round(v * k)));
+    return 'rgb(' + c((n >> 16) & 255) + ',' + c((n >> 8) & 255) + ',' + c(n & 255) + ')';
+  }
+
+  /* svislý přechod na stěně: u paty tmavší, nahoře světlejší */
+  function faceGrad(ctx, color, yTop, yBot, k) {
+    if (!/^#[0-9a-f]{6}$/i.test(color) || !(yBot > yTop)) return color;
+    const g = ctx.createLinearGradient(0, yTop, 0, yBot);
+    g.addColorStop(0, shade(color, 1 + k));
+    g.addColorStop(1, shade(color, 1 - k));
+    return g;
+  }
+
+  /* měkký kontaktní stín pod stavbou, posunutý po směru světla */
+  function contact(ctx, w, d, dy) {
+    const cx = AX + 3, cy = AY + (dy || 0) + d * 0.4 + 2;
+    const r = w * 1.35 + 3;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1, 0.5);            // zploštění do izometrické roviny
+    ctx.translate(-cx, -cy);
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, 'rgba(10, 15, 22, 0.40)');
+    g.addColorStop(0.55, 'rgba(10, 15, 22, 0.20)');
+    g.addColorStop(1, 'rgba(10, 15, 22, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   function tile(ctx, color, edgeLight, edgeDark) {
     diamond(ctx, AX, AY, HW, HH);
-    ctx.fillStyle = color;
+    // jen náznak modelování; silnější přechod by zvýraznil mřížku dlaždic
+    ctx.fillStyle = faceGrad(ctx, color, AY - HH, AY + HH, 0.03);
     ctx.fill();
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = edgeDark;
@@ -45,49 +87,107 @@
 
   // vyvýšený blok (kopec, hora)
   function raised(ctx, h, topColor, leftColor, rightColor) {
-    ctx.fillStyle = leftColor;
+    ctx.fillStyle = faceGrad(ctx, leftColor, AY - h, AY + HH, 0.18);
     ctx.beginPath();
     ctx.moveTo(AX - HW, AY); ctx.lineTo(AX, AY + HH);
     ctx.lineTo(AX, AY + HH - h); ctx.lineTo(AX - HW, AY - h);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = rightColor;
+    ctx.fillStyle = faceGrad(ctx, rightColor, AY - h, AY + HH, 0.18);
     ctx.beginPath();
     ctx.moveTo(AX + HW, AY); ctx.lineTo(AX, AY + HH);
     ctx.lineTo(AX, AY + HH - h); ctx.lineTo(AX + HW, AY - h);
     ctx.closePath(); ctx.fill();
     diamond(ctx, AX, AY - h, HW, HH);
-    ctx.fillStyle = topColor; ctx.fill();
+    ctx.fillStyle = faceGrad(ctx, topColor, AY - h - HH, AY - h + HH, 0.08);
+    ctx.fill();
+    // světlá hrana na temeni odděluje vršek od stěn
+    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(AX - HW, AY - h); ctx.lineTo(AX, AY - h - HH); ctx.lineTo(AX + HW, AY - h);
+    ctx.stroke();
   }
 
-  // kvádr pro budovy: šířka w, hloubka d (v iso), výška h, střed na kotvě
-  function box(ctx, w, d, h, top, left, right, dy) {
+  /* Kvádr pro budovy: šířka w, hloubka d (v iso), výška h, střed na kotvě.
+     `noShadow` je pro patra postavená na jiném kvádru – ta na zem nedosáhnou. */
+  function box(ctx, w, d, h, top, left, right, dy, noShadow) {
     dy = dy || 0;
     const cy = AY + dy;
-    ctx.fillStyle = left;
+    if (!noShadow) contact(ctx, w, d, dy);
+    ctx.fillStyle = faceGrad(ctx, left, cy - h, cy + d, 0.15);
     ctx.beginPath();
     ctx.moveTo(AX - w, cy); ctx.lineTo(AX, cy + d);
     ctx.lineTo(AX, cy + d - h); ctx.lineTo(AX - w, cy - h);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = right;
+    ctx.fillStyle = faceGrad(ctx, right, cy - h, cy + d, 0.15);
     ctx.beginPath();
     ctx.moveTo(AX + w, cy); ctx.lineTo(AX, cy + d);
     ctx.lineTo(AX, cy + d - h); ctx.lineTo(AX + w, cy - h);
     ctx.closePath(); ctx.fill();
-    ctx.fillStyle = top;
+    ctx.fillStyle = faceGrad(ctx, top, cy - d - h, cy + d - h, 0.06);
     ctx.beginPath();
     ctx.moveTo(AX, cy - d - h); ctx.lineTo(AX + w, cy - h);
     ctx.lineTo(AX, cy + d - h); ctx.lineTo(AX - w, cy - h);
     ctx.closePath(); ctx.fill();
+    // světlá hrana po obvodu střechy dodá kvádru objem
+    ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(AX - w, cy - h); ctx.lineTo(AX, cy - d - h); ctx.lineTo(AX + w, cy - h);
+    ctx.stroke();
+    // svislá hrana mezi stěnami – bez ní kvádr splývá
+    ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+    ctx.beginPath();
+    ctx.moveTo(AX, cy + d); ctx.lineTo(AX, cy + d - h);
+    ctx.stroke();
+  }
+
+  /* Sedlová střecha nad kvádrem: hřeben běží podél jedné izometrické osy,
+     takže dům přestane být kostka s barevným víkem. Dvě roviny se liší
+     odstínem podle sklonu ke světlu, štíty na koncích hřebene taky. */
+  function gable(ctx, w, d, h, dy, rh, color) {
+    const cy = AY + (dy || 0);
+    const N = [AX, cy - d - h], E = [AX + w, cy - h];
+    const S = [AX, cy + d - h], W = [AX - w, cy - h];
+    const R1 = [AX - w / 2, cy - h - d / 2 - rh];
+    const R2 = [AX + w / 2, cy - h + d / 2 - rh];
+    const poly = (pts, fill) => {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+      ctx.closePath(); ctx.fill();
+    };
+    poly([N, E, R2, R1], shade(color, 1.16));   // odvrácená rovina k světlu
+    poly([W, S, R2, R1], shade(color, 0.82));   // přivrácená, ale strmější
+    poly([W, N, R1], shade(color, 0.95));       // štít vlevo
+    poly([S, E, R2], shade(color, 0.7));        // štít vpravo
+    // hřeben přisvětlený, ať je zlom vidět
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(R1[0], R1[1]); ctx.lineTo(R2[0], R2[1]);
+    ctx.stroke();
   }
 
   function tree(ctx, x, y, s) {
+    // stín u paty a odstíněné patro dodají stromu hloubku
+    ctx.fillStyle = 'rgba(10, 15, 22, 0.22)';
+    ctx.beginPath();
+    ctx.ellipse(x + 2, y + 1, 5 * s, 2.2 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = '#5a3d20';
     ctx.fillRect(x - 1, y - 3 * s, 2, 3 * s);
-    ctx.fillStyle = '#2f6b33';
     for (let i = 0; i < 3; i++) {
       const w = (6 - i * 1.5) * s, ty = y - 3 * s - i * 4 * s;
+      ctx.fillStyle = shade('#2f6b33', 1 + i * 0.12);
       ctx.beginPath();
       ctx.moveTo(x, ty - 6 * s); ctx.lineTo(x + w, ty); ctx.lineTo(x - w, ty);
+      ctx.closePath(); ctx.fill();
+      // přisvětlená levá polovina jehlanu
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.beginPath();
+      ctx.moveTo(x, ty - 6 * s); ctx.lineTo(x, ty); ctx.lineTo(x - w, ty);
       ctx.closePath(); ctx.fill();
     }
   }
@@ -142,12 +242,19 @@
 
     at(S.HOUSE, (c) => {
       tile(c, '#9aa77f', '#aeb992', '#7d8a66');
-      box(c, 9, 5, 9, '#c2503e', '#e8e2d2', '#c9c2b0');
+      box(c, 9, 5, 8, '#e8e2d2', '#e8e2d2', '#c9c2b0');
+      gable(c, 9, 5, 8, 0, 7, '#c2503e');
     });
     at(S.HOUSE2, (c) => {
       tile(c, '#9aa77f', '#aeb992', '#7d8a66');
-      box(c, 12, 6, 14, '#b0483a', '#e3dccb', '#c2baa7');
-      box(c, 6, 3, 20, '#8a4a3e', '#d8d2c2', '#b8b09c', -4);
+      box(c, 12, 6, 12, '#e3dccb', '#e3dccb', '#c2baa7');
+      gable(c, 12, 6, 12, 0, 8, '#b0483a');
+      // přístavba stranou, ať sousední domy nevypadají jako kopie
+      c.save();
+      c.translate(-7, 4);
+      box(c, 5, 3, 8, '#d8d2c2', '#d8d2c2', '#b8b09c');
+      gable(c, 5, 3, 8, 0, 4, '#8a4a3e');
+      c.restore();
     });
     at(S.CENTER, (c) => {
       tile(c, '#8f9db2', '#a5b2c4', '#75839a');
@@ -172,6 +279,7 @@
     });
     at(S.DAM, (c) => {
       tile(c, '#33739f', '#5493bd', '#265877');
+      contact(c, 15, 7);
       c.fillStyle = '#9aa2ab';
       c.beginPath();
       c.moveTo(AX - HW + 4, AY - 2); c.quadraticCurveTo(AX, AY - 26, AX + HW - 4, AY - 2);
@@ -197,6 +305,7 @@
     });
     at(S.SOLAR, (c) => {
       tile(c, '#9aa77f', '#aeb992', '#7d8a66');
+      contact(c, 13, 6);
       for (const [ox, oy] of [[-11, -2], [7, -6], [-2, 5]]) {
         c.fillStyle = '#1d3a5f';
         c.beginPath();
@@ -208,6 +317,7 @@
     });
     at(S.WIND, (c) => {
       tile(c, '#9db374', '#b1c489', '#7f945c');
+      contact(c, 5, 3);
       c.strokeStyle = '#e8ecef'; c.lineWidth = 3;
       c.beginPath(); c.moveTo(AX, AY - 2); c.lineTo(AX, AY - 46); c.stroke();
       c.fillStyle = '#dfe4e8';
@@ -277,7 +387,7 @@
       tile(c, '#9aa77f', '#aeb992', '#7d8a66');
       // kontejnery baterií
       box(c, 11, 5, 10, '#3a7d54', '#8fd0a8', '#5da97c');
-      box(c, 5, 3, 14, '#33684a', '#7fc096', '#529a6e', -6);
+      box(c, 5, 3, 14, '#33684a', '#7fc096', '#529a6e', -6, true);
       c.fillStyle = '#1f4530';
       for (let q = 0; q < 3; q++) c.fillRect(AX - 8 + q * 6, AY - 12, 3, 6);
       // blesk
@@ -303,7 +413,7 @@
       c.strokeStyle = '#e0873c'; c.lineWidth = 2;
       c.beginPath(); c.moveTo(AX - 14, AY - 4); c.lineTo(AX + 12, AY - 17); c.stroke();
       // měnírna (střídač) s označením =/~
-      box(c, 6, 3, 11, '#6c737c', '#c9ced5', '#a2a8b0', -14);
+      box(c, 6, 3, 11, '#6c737c', '#c9ced5', '#a2a8b0', -14, true);
       c.fillStyle = '#ffe14d';
       c.fillRect(AX - 3, AY - 30, 6, 1.6);
       c.beginPath();
@@ -355,6 +465,7 @@
 
     at(S.XBORDER, (c) => {
       tile(c, '#b9b3a4', '#cbc6b8', '#968f80');
+      contact(c, 8, 4);
       // hraniční stožár (příhradový)
       c.strokeStyle = '#6e7680'; c.lineWidth = 2.5;
       c.beginPath(); c.moveTo(AX - 7, AY + 2); c.lineTo(AX, AY - 46); c.stroke();
@@ -586,6 +697,7 @@
        a výšku střechy, aby šel doplnit pás oken a sběrač. */
     function car(ctx, L, W, h, dy, roof, flank, front) {
       const cy = AY + dy;
+      contact(ctx, L * 0.8, W * 1.6, dy);
       const P = (sl, sw) => [AX + sl * L - sw * W, cy + sl * L / 2 + sw * W / 2];
       const g = { p1: P(1, 1), p2: P(1, -1), p3: P(-1, -1), p4: P(-1, 1), h, top: cy - h };
       const up = (p) => [p[0], p[1] - h];

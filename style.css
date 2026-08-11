@@ -178,13 +178,13 @@ body.photo #build-cost { display: none !important; }
   max-height: calc(100vh - 120px);
   overflow-y: auto;
 }
-/* nadpis skupiny nástrojů (Nástroje / Síť / Zdroje / Úložiště) */
-.tool-group {
+/* nadpis skupiny v postranních panelech */
+.tool-group, .line-group {
   font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
   color: #74838f; padding: 6px 8px 2px; margin-top: 2px;
   border-top: 1px solid #23303c;
 }
-.tool-group:first-child { margin-top: 0; border-top: none; padding-top: 2px; }
+.tool-group:first-child, .line-group:first-child { margin-top: 0; border-top: none; padding-top: 2px; }
 
 .tool {
   display: flex; align-items: center; gap: 7px;
@@ -246,22 +246,41 @@ body.photo #build-cost { display: none !important; }
   border-radius: 10px;
   padding: 8px;
   backdrop-filter: blur(4px);
-  max-width: 230px;
+  width: 288px;
 }
 .linelvl {
-  display: flex; align-items: center; gap: 7px;
+  display: flex; align-items: center; gap: 6px;
   background: transparent; border: 1px solid transparent;
   color: #cdd6de; font-size: 12.5px; text-align: left;
-  padding: 5px 8px; border-radius: 7px; cursor: pointer;
-  white-space: nowrap;
+  padding: 3px 7px; border-radius: 7px; cursor: pointer;
+  white-space: nowrap; width: 100%;
+  font-variant-numeric: tabular-nums;
 }
 .linelvl:hover { background: rgba(255, 255, 255, 0.07); }
 .linelvl.active { background: #274a68; border-color: #4a80ab; color: #fff; }
+/* proužek v barvě hladiny; tloušťka napovídá kapacitu */
 .linelvl .swatch {
-  width: 12px; height: 12px; border-radius: 3px; flex: none;
-  border: 1px solid rgba(255,255,255,0.25);
+  flex: none; width: 22px; height: 14px;
+  display: flex; align-items: center;
 }
-.linelvl .cost { margin-left: auto; font-size: 10.5px; color: #8b98a5; padding-left: 8px; }
+.linelvl .swatch i {
+  display: block; width: 100%; border-radius: 2px;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.25);
+}
+.linelvl .lv-name { flex: 1; }
+.linelvl .lv-cap { flex: none; width: 54px; text-align: right; color: #a9b6c2; font-size: 11px; }
+.linelvl .lv-len { flex: none; width: 40px; text-align: right; color: #8b98a5; font-size: 11px; }
+.linelvl .lv-cost { flex: none; width: 50px; text-align: right; color: #e8c84a; font-size: 11px; }
+
+/* podzemní kabel není napěťová úroveň, je to přepínač */
+.cable-toggle { margin-top: 6px; border-top: 1px solid #23303c; border-radius: 0 0 7px 7px; padding-top: 6px; }
+.cable-toggle .tick {
+  flex: none; width: 14px; height: 14px; border-radius: 4px;
+  border: 1px solid #45596e; background: #1b2530;
+  font-size: 10px; line-height: 12px; text-align: center; color: transparent;
+}
+.cable-toggle.active { background: transparent; border-color: transparent; border-top-color: #23303c; color: #cdd6de; }
+.cable-toggle.active .tick { background: #4a80ab; border-color: #7fb0d8; color: #fff; }
 
 /* ---------- info pod kurzorem ---------- */
 #hover-info {
